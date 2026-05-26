@@ -4,7 +4,7 @@ import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db, AsyncSessionLocal
@@ -35,6 +35,57 @@ async def websocket_endpoint(websocket: WebSocket, room_code: str, player_id: in
         player.is_connected = True
         await db.commit()
         await broadcast_room_state(db, room_code)
+
+        # Resend current game state so reconnecting players don't miss situation_dealt
+        room = await db.get(Room, player.room_id)
+        if room and room.status == RoomStatus.playing:
+            round_ = await _get_active_round(db, player.room_id)
+            if round_:
+                fresh_player = await _load_player(db, player_id, room_code)
+                if round_.status == RoundStatus.playing:
+                    await manager.send_personal(
+                        player_id, room_code,
+                        {
+                            "type": "situation_dealt",
+                            "payload": {
+                                "round_id": round_.id,
+                                "round_number": round_.round_number,
+                                "situation": round_.situation_text,
+                                "your_cards": player_card_list(fresh_player) if fresh_player else [],
+                                "czar_id": round_.czar_id,
+                                "is_czar": round_.czar_id == player_id,
+                                "timer": room.timer_play,
+                            },
+                        },
+                    )
+                elif round_.status == RoundStatus.voting:
+                    plays_q = await db.execute(
+                        select(Play)
+                        .where(Play.round_id == round_.id)
+                        .options(selectinload(Play.meme), selectinload(Play.second_meme))
+                    )
+                    plays = list(plays_q.scalars().all())
+                    anonymous_plays = [
+                        {
+                            "play_id": pl.id,
+                            "player_id": pl.player_id,
+                            "meme_url": pl.meme.url,
+                            "meme_name": pl.meme.name,
+                            "second_meme_url": pl.second_meme.url if pl.second_meme else None,
+                        }
+                        for pl in plays
+                    ]
+                    await manager.send_personal(
+                        player_id, room_code,
+                        {
+                            "type": "voting_started",
+                            "payload": {
+                                "round_id": round_.id,
+                                "plays": anonymous_plays,
+                                "timer": room.timer_vote,
+                            },
+                        },
+                    )
 
     try:
         while True:
@@ -152,21 +203,23 @@ async def _handle_play_card(db: AsyncSession, payload: dict, player: Player, roo
         second_card = next((pc for pc in player.cards if pc.id == second_card_id), None)
         if double_card and second_card:
             second_meme_id = second_card.meme_id
-            db.delete(double_card)
+            await db.delete(double_card)
 
     play = Play(round_id=round_.id, player_id=player.id, meme_id=card.meme_id, second_meme_id=second_meme_id)
     db.add(play)
-    db.delete(card)
+    await db.delete(card)
     if second_card_id and second_meme_id:
         second_card = next((pc for pc in player.cards if pc.id == second_card_id), None)
         if second_card:
-            db.delete(second_card)
+            await db.delete(second_card)
 
     await db.flush()
+    # Commit play immediately so other concurrent sessions can see it
+    await db.commit()
 
     await manager.broadcast(room_code, {"type": "player_played", "payload": {"player_id": player.id}})
 
-    # Check if everyone played
+    # Check if everyone played using committed data
     plays_q = await db.execute(select(Play).where(Play.round_id == round_.id))
     plays = list(plays_q.scalars().all())
 
@@ -174,12 +227,17 @@ async def _handle_play_card(db: AsyncSession, payload: dict, player: Player, roo
     expected = len(active_players) - (1 if room.mode == GameMode.czar else 0)
 
     if len(plays) >= expected:
-        round_.status = RoundStatus.voting
+        # Atomic conditional update — only the first session to run this will succeed
+        result = await db.execute(
+            update(Round)
+            .where(Round.id == round_.id, Round.status == RoundStatus.playing)
+            .values(status=RoundStatus.voting)
+            .returning(Round.id)
+        )
         await db.commit()
-        from app.game_engine import _start_voting
-        await _start_voting(db, room_code, round_.id)
-    else:
-        await db.commit()
+        if result.scalar_one_or_none() is not None:
+            from app.game_engine import _start_voting
+            await _start_voting(db, room_code, round_.id)
 
 
 async def _handle_vote(db: AsyncSession, payload: dict, player: Player, room_code: str) -> None:
@@ -306,7 +364,7 @@ async def _handle_special_card(db: AsyncSession, payload: dict, player: Player, 
             import random
             stolen_card = random.choice(target.cards)
             stolen_card.player_id = player.id
-            db.delete(card)
+            await db.delete(card)
             await db.commit()
 
             await manager.send_personal(
@@ -345,26 +403,8 @@ async def _handle_disconnect(db: AsyncSession, player_id: int, room_code: str) -
         {"type": "player_disconnected", "payload": {"player_id": player_id, "nickname": player.nickname}},
     )
 
-    if player.is_host and room and room.status == RoomStatus.waiting:
-        # Transfer host
-        active_q = await db.execute(
-            select(Player).where(
-                Player.room_id == player.room_id,
-                Player.id != player_id,
-                Player.is_connected == True,
-            )
-        )
-        others = list(active_q.scalars().all())
-        if others:
-            new_host = others[0]
-            new_host.is_host = True
-            player.is_host = False
-            room.host_id = new_host.id
-            await db.flush()
-            await manager.broadcast(
-                room_code,
-                {"type": "host_changed", "payload": {"new_host_id": new_host.id, "nickname": new_host.nickname}},
-            )
+    # Host role persists through disconnection — original host resumes on reconnect.
+    # If host is permanently gone, they remain host; the room will naturally expire.
 
     await db.commit()
     await broadcast_room_state(db, room_code)

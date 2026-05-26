@@ -5,7 +5,7 @@ import random
 from typing import Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, update
 from sqlalchemy.orm import selectinload
 
 from app.database import AsyncSessionLocal
@@ -18,22 +18,27 @@ from app.connection_manager import manager
 logger = logging.getLogger(__name__)
 
 PACK_UNLOCK_THRESHOLDS = {10: "classic_internet", 25: "russian_segment", 50: "gaming"}
-SPECIAL_CARD_CHANCE = 0.08  # 8% chance per card dealt
+SPECIAL_CARD_CHANCE = 0.08
 
 
 async def deal_cards(db: AsyncSession, player: Player, count: int, category: str = "starter") -> list[Meme]:
-    """Deal `count` random memes to a player, avoiding duplicates they already hold."""
+    """Deal `count` random non-special memes to a player, avoiding duplicates."""
     held_ids = [pc.meme_id for pc in player.cards]
+
     query = select(Meme).where(
         Meme.category.in_(["starter", category]),
-        Meme.id.not_in(held_ids) if held_ids else True,
-    ).order_by(func.random()).limit(count)
+        Meme.is_special == False,  # noqa: E712
+    )
+    if held_ids:
+        query = query.where(Meme.id.not_in(held_ids))
+    query = query.order_by(func.random()).limit(count)
+
     result = await db.execute(query)
     memes = list(result.scalars().all())
 
-    # Inject special card with low probability
+    # Occasionally inject a special card
     if random.random() < SPECIAL_CARD_CHANCE:
-        special_q = select(Meme).where(Meme.is_special == True).order_by(func.random()).limit(1)
+        special_q = select(Meme).where(Meme.is_special == True).order_by(func.random()).limit(1)  # noqa: E712
         sr = await db.execute(special_q)
         special = sr.scalar_one_or_none()
         if special and special.id not in held_ids:
@@ -60,8 +65,9 @@ async def get_active_players(db: AsyncSession, room_code: str) -> list[Player]:
     result = await db.execute(
         select(Player)
         .join(Room, Player.room_id == Room.id)
-        .where(Room.code == room_code, Player.is_connected == True)
+        .where(Room.code == room_code, Player.is_connected == True)  # noqa: E712
         .options(selectinload(Player.cards).selectinload(PlayerCard.meme))
+        .execution_options(populate_existing=True)
     )
     return list(result.scalars().all())
 
@@ -82,28 +88,31 @@ def player_card_list(player: Player) -> list[dict]:
 
 async def broadcast_room_state(db: AsyncSession, room_code: str) -> None:
     players = await get_active_players(db, room_code)
-    payload = {
-        "type": "room_updated",
-        "payload": {
-            "players": [
-                {
-                    "id": p.id,
-                    "nickname": p.nickname,
-                    "is_host": p.is_host,
-                    "is_connected": p.is_connected,
-                    "card_count": len(p.cards),
-                }
-                for p in players
-            ]
+    await manager.broadcast(
+        room_code,
+        {
+            "type": "room_updated",
+            "payload": {
+                "players": [
+                    {
+                        "id": p.id,
+                        "nickname": p.nickname,
+                        "is_host": p.is_host,
+                        "is_connected": p.is_connected,
+                        "card_count": len(p.cards),
+                    }
+                    for p in players
+                ]
+            },
         },
-    }
-    await manager.broadcast(room_code, payload)
+    )
 
 
 async def pick_situation(db: AsyncSession, room: Room, used_ids: list[int]) -> tuple[str, Optional[int]]:
     if room.custom_situations:
-        lines = [l.strip() for l in room.custom_situations.splitlines() if l.strip()]
-        return (random.choice(lines) if lines else "Что бы вы сделали?"), None
+        lines = [ln.strip() for ln in room.custom_situations.splitlines() if ln.strip()]
+        if lines:
+            return random.choice(lines), None
 
     query = select(Situation)
     if room.category != SituationCategory.all:
@@ -113,28 +122,31 @@ async def pick_situation(db: AsyncSession, room: Room, used_ids: list[int]) -> t
     query = query.order_by(func.random()).limit(1)
     result = await db.execute(query)
     sit = result.scalar_one_or_none()
+
     if not sit:
-        # Reset and pick any
+        # All situations used — pick any
         result = await db.execute(select(Situation).order_by(func.random()).limit(1))
         sit = result.scalar_one_or_none()
-    if sit:
-        return sit.text, sit.id
-    return "Что бы вы сделали?", None
+
+    return (sit.text, sit.id) if sit else ("Что бы вы сделали?", None)
 
 
 async def start_round(db: AsyncSession, room: Room, room_code: str, round_number: int) -> None:
     players = await get_active_players(db, room_code)
+    if not players:
+        return
 
     used_q = await db.execute(
-        select(Round.situation_id).where(Round.room_id == room.id, Round.situation_id.isnot(None))
+        select(Round.situation_id).where(
+            Round.room_id == room.id, Round.situation_id.isnot(None)
+        )
     )
     used_ids = [r for r in used_q.scalars().all() if r]
 
     situation_text, situation_id = await pick_situation(db, room, used_ids)
 
-    czar_id = None
+    czar_id: Optional[int] = None
     if room.mode == GameMode.czar:
-        # Pick czar by order
         sorted_players = sorted(players, key=lambda p: p.czar_order)
         czar = sorted_players[round_number % len(sorted_players)]
         czar_id = czar.id
@@ -150,8 +162,30 @@ async def start_round(db: AsyncSession, room: Room, room_code: str, round_number
     db.add(round_)
     await db.flush()
 
-    # Send each player their cards + situation
+    await db.flush()
+
+    # Commit round before sending cards so cards are in a stable state
+    await db.commit()
+
     for p in players:
+        # Query cards directly to avoid stale identity-map data
+        cards_q = await db.execute(
+            select(PlayerCard)
+            .where(PlayerCard.player_id == p.id)
+            .options(selectinload(PlayerCard.meme))
+        )
+        fresh_cards = list(cards_q.scalars().all())
+        your_cards = [
+            {
+                "card_id": pc.id,
+                "meme_id": pc.meme_id,
+                "url": pc.meme.url,
+                "name": pc.meme.name,
+                "is_special": pc.meme.is_special,
+                "special_type": pc.meme.special_type.value if pc.meme.special_type else None,
+            }
+            for pc in fresh_cards
+        ]
         await manager.send_personal(
             p.id,
             room_code,
@@ -161,7 +195,7 @@ async def start_round(db: AsyncSession, room: Room, room_code: str, round_number
                     "round_id": round_.id,
                     "round_number": round_number,
                     "situation": situation_text,
-                    "your_cards": player_card_list(p),
+                    "your_cards": your_cards,
                     "czar_id": czar_id,
                     "is_czar": p.id == czar_id,
                     "timer": room.timer_play,
@@ -169,20 +203,31 @@ async def start_round(db: AsyncSession, room: Room, room_code: str, round_number
             },
         )
 
-    await db.commit()
-
-    # Schedule play timer
     asyncio.create_task(play_timer(room.id, room_code, round_.id, room.timer_play))
 
 
+# ──────────────────────────────────────────────────────────────
+# Timers — use AsyncSessionLocal directly (no SessionClass arg)
+# ──────────────────────────────────────────────────────────────
+
 async def play_timer(room_id: int, room_code: str, round_id: int, seconds: int) -> None:
-    """Countdown for play phase. Auto-plays for players who haven't played."""
     for tick in range(seconds, 0, -1):
         await asyncio.sleep(1)
-        await manager.broadcast(room_code, {"type": "timer_tick", "payload": {"phase": "play", "seconds": tick - 1}})
-
+        await manager.broadcast(
+            room_code, {"type": "timer_tick", "payload": {"phase": "play", "seconds": tick - 1}}
+        )
     async with AsyncSessionLocal() as db:
         await _auto_play_missing(db, room_code, round_id)
+
+
+async def vote_timer(room_id: int, room_code: str, round_id: int, seconds: int) -> None:
+    for tick in range(seconds, 0, -1):
+        await asyncio.sleep(1)
+        await manager.broadcast(
+            room_code, {"type": "timer_tick", "payload": {"phase": "vote", "seconds": tick - 1}}
+        )
+    async with AsyncSessionLocal() as db:
+        await finalize_round(db, room_code, round_id)
 
 
 async def _auto_play_missing(db: AsyncSession, room_code: str, round_id: int) -> None:
@@ -206,7 +251,7 @@ async def _auto_play_missing(db: AsyncSession, room_code: str, round_id: int) ->
         card = random.choice(p.cards)
         play = Play(round_id=round_id, player_id=p.id, meme_id=card.meme_id)
         db.add(play)
-        db.delete(card)
+        await db.delete(card)
         await db.flush()
         await manager.broadcast(room_code, {"type": "player_played", "payload": {"player_id": p.id}})
 
@@ -223,14 +268,13 @@ async def _start_voting(db: AsyncSession, room_code: str, round_id: int) -> None
     room = await db.get(Room, round_.room_id)
 
     plays_q = await db.execute(
-        select(Play).where(Play.round_id == round_id).options(
-            selectinload(Play.meme), selectinload(Play.second_meme)
-        )
+        select(Play)
+        .where(Play.round_id == round_id)
+        .options(selectinload(Play.meme), selectinload(Play.second_meme))
     )
     plays = list(plays_q.scalars().all())
-
-    # Shuffle for anonymity
     random.shuffle(plays)
+
     anonymous_plays = [
         {
             "play_id": pl.id,
@@ -243,37 +287,21 @@ async def _start_voting(db: AsyncSession, room_code: str, round_id: int) -> None
     ]
 
     if room.mode == GameMode.czar:
-        # Only show plays to czar for picking
-        await manager.send_personal(
-            round_.czar_id,
-            room_code,
-            {
-                "type": "voting_started",
-                "payload": {
-                    "round_id": round_id,
-                    "plays": anonymous_plays,
-                    "mode": "czar",
-                    "timer": room.timer_vote,
-                },
-            },
-        )
-        # Other players wait
         players = await get_active_players(db, room_code)
         for p in players:
-            if p.id != round_.czar_id:
-                await manager.send_personal(
-                    p.id,
-                    room_code,
-                    {
-                        "type": "voting_started",
-                        "payload": {
-                            "round_id": round_id,
-                            "plays": anonymous_plays,
-                            "mode": "czar_waiting",
-                            "timer": room.timer_vote,
-                        },
+            await manager.send_personal(
+                p.id,
+                room_code,
+                {
+                    "type": "voting_started",
+                    "payload": {
+                        "round_id": round_id,
+                        "plays": anonymous_plays,
+                        "mode": "czar" if p.id == round_.czar_id else "czar_waiting",
+                        "timer": room.timer_vote,
                     },
-                )
+                },
+            )
     else:
         await manager.broadcast(
             room_code,
@@ -288,28 +316,28 @@ async def _start_voting(db: AsyncSession, room_code: str, round_id: int) -> None
             },
         )
 
-    asyncio.create_task(vote_timer(db.__class__, room.id, room_code, round_id, room.timer_vote))
-
-
-async def vote_timer(SessionClass, room_id: int, room_code: str, round_id: int, seconds: int) -> None:
-    for tick in range(seconds, 0, -1):
-        await asyncio.sleep(1)
-        await manager.broadcast(room_code, {"type": "timer_tick", "payload": {"phase": "vote", "seconds": tick - 1}})
-
-    async with SessionClass() as db:
-        await finalize_round(db, room_code, round_id)
+    asyncio.create_task(vote_timer(room.id, room_code, round_id, room.timer_vote))
 
 
 async def finalize_round(db: AsyncSession, room_code: str, round_id: int) -> None:
-    round_ = await db.get(Round, round_id)
-    if not round_ or round_.status == RoundStatus.finished:
-        return
+    # Atomic status update — prevents double-finalization from timer + last vote
+    upd = await db.execute(
+        update(Round)
+        .where(Round.id == round_id, Round.status.in_([RoundStatus.playing, RoundStatus.voting]))
+        .values(status=RoundStatus.finished)
+        .returning(Round.id)
+    )
+    await db.flush()
+    if upd.scalar_one_or_none() is None:
+        return  # Already finalized
 
-    round_.status = RoundStatus.finished
+    round_ = await db.get(Round, round_id)
     room = await db.get(Room, round_.room_id)
 
     plays_q = await db.execute(
-        select(Play).where(Play.round_id == round_id).options(
+        select(Play)
+        .where(Play.round_id == round_id)
+        .options(
             selectinload(Play.meme),
             selectinload(Play.player),
             selectinload(Play.votes_received),
@@ -344,58 +372,64 @@ async def finalize_round(db: AsyncSession, room_code: str, round_id: int) -> Non
     min_votes = min(p["vote_count"] for p in play_results)
 
     winners = [p for p in play_results if p["vote_count"] == max_votes]
-    losers = [p for p in play_results if p["vote_count"] == min_votes]
-    is_tie = len(winners) > 1 and max_votes == min_votes
+    losers  = [p for p in play_results if p["vote_count"] == min_votes]
+    is_tie  = len(winners) > 1 and max_votes == min_votes
 
-    if not is_tie:
-        winner_play = next(pl for pl in plays if pl.player_id == winners[0]["player_id"])
-        # Winner's played card already removed; no new penalty for winner
-        # Loser gets penalty cards
-        if losers[0]["player_id"] != winners[0]["player_id"]:
-            loser_player = await db.get(Player, losers[0]["player_id"])
-            if loser_player:
-                await _check_skip_penalty(db, room_code, loser_player, room)
+    if not is_tie and losers[0]["player_id"] != winners[0]["player_id"]:
+        # Load loser with cards for penalty logic
+        loser_q = await db.execute(
+            select(Player)
+            .where(Player.id == losers[0]["player_id"])
+            .options(selectinload(Player.cards).selectinload(PlayerCard.meme))
+        )
+        loser_player = loser_q.scalar_one_or_none()
+        if loser_player:
+            await _check_skip_penalty(db, room_code, loser_player, room)
 
     await db.commit()
 
-    # Check win condition
     players = await get_active_players(db, room_code)
     winner_player = next((p for p in players if len(p.cards) == 0), None)
 
-    result_payload = {
-        "type": "round_result",
-        "payload": {
-            "round_id": round_id,
-            "plays": play_results,
-            "is_tie": is_tie,
-            "winners": [w["player_id"] for w in winners] if not is_tie else [],
-            "losers": [l["player_id"] for l in losers] if not is_tie else [],
-            "game_over": winner_player is not None,
+    await manager.broadcast(
+        room_code,
+        {
+            "type": "round_result",
+            "payload": {
+                "round_id": round_id,
+                "plays": play_results,
+                "is_tie": is_tie,
+                "winners": [w["player_id"] for w in winners] if not is_tie else [],
+                "losers":  [l["player_id"] for l in losers]  if not is_tie else [],
+                "game_over": winner_player is not None,
+            },
         },
-    }
-    await manager.broadcast(room_code, result_payload)
+    )
 
     if winner_player:
         await asyncio.sleep(3)
         await _end_game(db, room_code, room, players, winner_player)
         return
 
-    # Next round after 5 seconds
     await asyncio.sleep(5)
-    round_number = round_.round_number + 1
     room_fresh = await db.get(Room, room.id)
     if room_fresh and room_fresh.status == RoomStatus.playing:
-        await start_round(db, room_fresh, room_code, round_number)
+        await start_round(db, room_fresh, room_code, round_.round_number + 1)
 
 
 async def _check_skip_penalty(db: AsyncSession, room_code: str, player: Player, room: Room) -> None:
-    """Give penalty cards, unless player has skip_penalty special card."""
+    """Give penalty cards unless player uses skip_penalty special."""
     skip_card = next(
-        (pc for pc in player.cards if pc.meme.is_special and pc.meme.special_type and pc.meme.special_type.value == "skip_penalty"),
-        None
+        (
+            pc for pc in player.cards
+            if pc.meme.is_special
+            and pc.meme.special_type
+            and pc.meme.special_type.value == "skip_penalty"
+        ),
+        None,
     )
     if skip_card:
-        db.delete(skip_card)
+        await db.delete(skip_card)
         await db.flush()
         await manager.send_personal(
             player.id,
@@ -416,7 +450,13 @@ async def _check_skip_penalty(db: AsyncSession, room_code: str, player: Player, 
             "type": "cards_received",
             "payload": {
                 "cards": [
-                    {"card_id": nc.id, "meme_id": m.id, "url": m.url, "name": m.name, "is_special": m.is_special}
+                    {
+                        "card_id": nc.id,
+                        "meme_id": m.id,
+                        "url": m.url,
+                        "name": m.name,
+                        "is_special": m.is_special,
+                    }
                     for nc, m in zip(new_cards, penalty_memes)
                 ],
                 "reason": "penalty",
@@ -426,7 +466,7 @@ async def _check_skip_penalty(db: AsyncSession, room_code: str, player: Player, 
 
 
 async def _get_random_memes(db: AsyncSession, count: int, exclude_ids: list[int]) -> list[Meme]:
-    q = select(Meme).where(Meme.is_special == False)
+    q = select(Meme).where(Meme.is_special == False)  # noqa: E712  # noqa: E712
     if exclude_ids:
         q = q.where(Meme.id.not_in(exclude_ids))
     q = q.order_by(func.random()).limit(count)
@@ -434,7 +474,9 @@ async def _get_random_memes(db: AsyncSession, count: int, exclude_ids: list[int]
     return list(result.scalars().all())
 
 
-async def _end_game(db: AsyncSession, room_code: str, room: Room, players: list[Player], winner: Player) -> None:
+async def _end_game(
+    db: AsyncSession, room_code: str, room: Room, players: list[Player], winner: Player
+) -> None:
     room.status = RoomStatus.finished
     await db.commit()
 
@@ -454,30 +496,31 @@ async def _end_game(db: AsyncSession, room_code: str, room: Room, players: list[
         },
     )
 
-    # Update stats for registered users
+    # Update stats for registered players
     for p in players:
-        if p.user_id:
-            from app.models import GameStats, UnlockedPack
-            stats_q = await db.execute(select(GameStats).where(GameStats.user_id == p.user_id))
-            stats = stats_q.scalar_one_or_none()
-            if not stats:
-                stats = GameStats(user_id=p.user_id)
-                db.add(stats)
-            stats.games_played += 1
-            if p.id == winner.id:
-                stats.games_won += 1
-            await db.flush()
+        if not p.user_id:
+            continue
+        from app.models import GameStats, UnlockedPack
 
-            # Check pack unlocks
-            for threshold, pack_name in PACK_UNLOCK_THRESHOLDS.items():
-                if stats.games_played >= threshold:
-                    existing = await db.execute(
-                        select(UnlockedPack).where(
-                            UnlockedPack.user_id == p.user_id,
-                            UnlockedPack.pack_name == pack_name,
-                        )
+        stats_q = await db.execute(select(GameStats).where(GameStats.user_id == p.user_id))
+        stats = stats_q.scalar_one_or_none()
+        if not stats:
+            stats = GameStats(user_id=p.user_id)
+            db.add(stats)
+        stats.games_played += 1
+        if p.id == winner.id:
+            stats.games_won += 1
+        await db.flush()
+
+        for threshold, pack_name in PACK_UNLOCK_THRESHOLDS.items():
+            if stats.games_played >= threshold:
+                ex = await db.execute(
+                    select(UnlockedPack).where(
+                        UnlockedPack.user_id == p.user_id,
+                        UnlockedPack.pack_name == pack_name,
                     )
-                    if not existing.scalar_one_or_none():
-                        db.add(UnlockedPack(user_id=p.user_id, pack_name=pack_name))
+                )
+                if not ex.scalar_one_or_none():
+                    db.add(UnlockedPack(user_id=p.user_id, pack_name=pack_name))
 
     await db.commit()

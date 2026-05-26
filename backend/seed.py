@@ -70,6 +70,30 @@ STARTER_MEMES = [
     ("https://i.imgflip.com/3c5uf8.png", "Nobody Absolutely Nobody"),
     ("https://i.imgflip.com/qkpy2.jpg", "Spiderman Pointing"),
     ("https://i.imgflip.com/7d68p.jpg", "Willy Wonka"),
+    ("https://i.imgflip.com/265k.jpg", "Third World Skeptical Kid"),
+    ("https://i.imgflip.com/5hfybi.jpg", "Trade Offer"),
+    ("https://i.imgflip.com/50lyb8.jpg", "Panik Kalm Panik"),
+    ("https://i.imgflip.com/33fb4o.jpg", "Stonks"),
+    ("https://i.imgflip.com/1bh8wl.jpg", "Bad Luck Brian"),
+    ("https://i.imgflip.com/4hbspy.jpg", "Gus Fring We Are Not The Same"),
+    ("https://i.imgflip.com/53ny2v.jpg", "Marked Safe From"),
+    ("https://i.imgflip.com/4vjgmh.jpg", "Megamind Peeking"),
+    ("https://i.imgflip.com/5exjdv.jpg", "Crying Cat"),
+    ("https://i.imgflip.com/3p3bij.jpg", "Swole Doge vs Cheems"),
+    ("https://i.imgflip.com/1o00in.jpg", "American Chopper Argument"),
+    ("https://i.imgflip.com/5y0m1d.jpg", "Patrick Star To Do List"),
+    ("https://i.imgflip.com/51wz3k.jpg", "Finding Neverland"),
+    ("https://i.imgflip.com/4t0m5.jpg", "NPC Talking"),
+    ("https://i.imgflip.com/2ku1a0.jpg", "I Bet He's Thinking About Other Women"),
+    ("https://i.imgflip.com/6t4ck9.jpg", "A Train Hitting A School Bus"),
+    ("https://i.imgflip.com/5p7csy.jpg", "Two Paths"),
+    ("https://i.imgflip.com/1s3k5.jpg", "I Should Buy A Boat Cat"),
+    ("https://i.imgflip.com/9ehk.jpg", "Waiting Skeleton"),
+    ("https://i.imgflip.com/26xrd.jpg", "The Most Interesting Man"),
+    ("https://i.imgflip.com/3046y.jpg", "Surprised Monkey"),
+    ("https://i.imgflip.com/m78d.jpg", "Ancient Aliens v2"),
+    ("https://i.imgflip.com/52e5ry.jpg", "Running Away Balloon"),
+    ("https://i.imgflip.com/6e73jb.jpg", "Squid Game Doll"),
 ]
 
 CLASSIC_INTERNET_MEMES = [
@@ -157,9 +181,9 @@ GAMING_MEMES = [
 ]
 
 SPECIAL_MEMES = [
-    ("https://i.imgflip.com/special1.jpg", "Кража карты", SpecialType.steal),
-    ("https://i.imgflip.com/special2.jpg", "Щит от штрафа", SpecialType.skip_penalty),
-    ("https://i.imgflip.com/special3.jpg", "Двойной удар", SpecialType.double_play),
+    ("https://i.imgflip.com/2zo1ki.jpg", "Кража карты", SpecialType.steal),
+    ("https://i.imgflip.com/5c7lwq.png", "Щит от штрафа", SpecialType.skip_penalty),
+    ("https://i.imgflip.com/3lmzyx.png", "Двойной удар", SpecialType.double_play),
 ]
 
 # ─── Situations ──────────────────────────────────────────────────────────────

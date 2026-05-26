@@ -48,7 +48,7 @@ async def my_stats(db: AsyncSession = Depends(get_db), user: User = Depends(requ
 
 @router.get("/leaderboard", response_model=list[LeaderboardEntry])
 async def leaderboard(
-    period: str = Query("all", regex="^(all|month|week)$"),
+    period: str = Query("all", pattern="^(all|month|week)$"),
     db: AsyncSession = Depends(get_db),
 ):
     query = (
