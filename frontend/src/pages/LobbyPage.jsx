@@ -32,8 +32,8 @@ export default function LobbyPage() {
   const { send } = useGameSocket(state.roomCode || code, state.playerId)
 
   useEffect(() => {
-    if (state.phase === 'playing') navigate(`/game/${code}`)
-  }, [state.phase, code, navigate])
+    if (state.phase === 'playing' && state.situation !== null) navigate(`/game/${code}`)
+  }, [state.phase, state.situation, code, navigate])
 
   const connected = state.players.filter(p => p.is_connected)
   const canStart  = connected.length >= 2

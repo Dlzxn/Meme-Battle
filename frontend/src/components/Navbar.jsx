@@ -17,15 +17,14 @@ export default function Navbar() {
 
       <div className="navbar-links">
         <Link to="/leaderboard" className="btn btn-ghost btn-sm">🏆 Рейтинг</Link>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span style={{ fontSize: 14 }}>{theme === 'dark' ? '🌙' : '☀️'}</span>
-          <button
-            className="theme-toggle"
-            onClick={toggle}
-            title={theme === 'dark' ? 'Светлая тема' : 'Тёмная тема'}
-            aria-label="Переключить тему"
-          />
-        </div>
+        <button
+          className="theme-toggle"
+          onClick={toggle}
+          title={theme === 'dark' ? 'Светлая тема' : 'Тёмная тема'}
+          aria-label="Переключить тему"
+        >
+          {theme === 'dark' ? '🌙' : '☀️'}
+        </button>
         {user ? (
           <>
             <Link to="/profile" className="btn btn-ghost btn-sm">

@@ -25,7 +25,7 @@ const TIMER_VOTE = [15, 30, 45, 60]
 const FLOATING_MEMES = [
   { url: 'https://i.imgflip.com/1bij.jpg',    style: { top: '12%', left: '4%',  rotate: '-8deg',  scale: 0.8, delay: '0s'  }},
   { url: 'https://i.imgflip.com/4t0m5.jpg',   style: { top: '20%', right: '3%', rotate: '10deg',  scale: 0.75, delay: '0.5s'}},
-  { url: 'https://i.imgflip.com/26jxvz.png',  style: { top: '60%', left: '2%',  rotate: '5deg',   scale: 0.7, delay: '1s'  }},
+  { url: 'https://i.imgflip.com/3lhx3p.jpg',  style: { top: '60%', left: '2%',  rotate: '5deg',   scale: 0.7, delay: '1s'  }},
   { url: 'https://i.imgflip.com/2wifvo.jpg',  style: { top: '65%', right: '2%', rotate: '-12deg', scale: 0.72, delay: '1.5s'}},
   { url: 'https://i.imgflip.com/1ur9b0.jpg',  style: { top: '38%', left: '1%',  rotate: '14deg',  scale: 0.65, delay: '0.8s'}},
 ]

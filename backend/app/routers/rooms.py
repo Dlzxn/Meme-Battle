@@ -9,7 +9,7 @@ from sqlalchemy.orm import selectinload
 from app.database import get_db
 from app.models import Room, Player, User, RoomStatus
 from app.schemas import RoomCreate, RoomOut
-from app.auth import get_current_user
+from app.auth import get_current_user, require_user
 
 router = APIRouter(prefix="/api/rooms", tags=["rooms"])
 
@@ -134,7 +134,7 @@ async def kick_player(
     code: str,
     player_id: int,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_user),
 ):
     result = await db.execute(
         select(Room).where(Room.code == code).options(selectinload(Room.players))

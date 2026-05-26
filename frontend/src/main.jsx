@@ -13,6 +13,13 @@ ReactDOM.createRoot(document.getElementById('root')).render(
       <ThemeProvider>
         <AuthProvider>
           <GameProvider>
+            <div className="bg-orbs" aria-hidden="true">
+              <span className="orb orb-1" />
+              <span className="orb orb-2" />
+              <span className="orb orb-3" />
+              <span className="orb orb-4" />
+              <span className="orb orb-5" />
+            </div>
             <App />
           </GameProvider>
         </AuthProvider>
