@@ -290,7 +290,8 @@ async def _handle_vote(db: AsyncSession, payload: dict, player: Player, room_cod
 
     active_players = await get_active_players(db, room_code)
     eligible_ids = {p.id for p in active_players}
-    if player.room.mode == GameMode.czar and round_.czar_id:
+    room = await db.get(Room, player.room_id)
+    if room and room.mode == GameMode.czar and round_.czar_id:
         eligible_ids.discard(round_.czar_id)
 
     voted_ids = {v.voter_id for v in votes}
@@ -386,11 +387,11 @@ async def _handle_special_card(db: AsyncSession, payload: dict, player: Player, 
             await db.commit()
 
             await manager.send_personal(
-                player.id, player.room.code,
+                player.id, room_code,
                 {"type": "card_stolen", "payload": {"meme_url": stolen_card.meme.url, "meme_name": stolen_card.meme.name}},
             )
             await manager.send_personal(
-                target_player_id, player.room.code,
+                target_player_id, room_code,
                 {"type": "card_stolen_from_you", "payload": {"by_nickname": player.nickname}},
             )
 
