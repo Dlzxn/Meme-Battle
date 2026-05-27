@@ -13,6 +13,7 @@ from app.database import Base
 class GameMode(str, enum.Enum):
     no_czar = "no_czar"
     czar = "czar"
+    arena = "arena"
 
 
 class RoomStatus(str, enum.Enum):
@@ -76,6 +77,7 @@ class Room(Base):
     is_public: Mapped[bool] = mapped_column(Boolean, default=False)
     category: Mapped[SituationCategory] = mapped_column(SAEnum(SituationCategory), default=SituationCategory.all)
     custom_situations: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    rounds_count: Mapped[int] = mapped_column(Integer, default=10)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     players: Mapped[list["Player"]] = relationship(back_populates="room", foreign_keys="Player.room_id")

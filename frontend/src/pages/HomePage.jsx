@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import Navbar from '../components/Navbar'
 import Toast from '../components/Toast'
@@ -8,31 +8,31 @@ import { useAuth } from '../context/AuthContext'
 import { useGame } from '../context/GameContext'
 
 const MODES = [
-  { value: 'no_czar', label: 'Без ведущего', desc: 'Все голосуют', icon: '🗳️' },
-  { value: 'czar',    label: 'С ведущим',    desc: 'Czar выбирает', icon: '👑' },
+  { value: 'no_czar', label: 'Без ведущего', desc: 'Все голосуют' },
+  { value: 'czar',    label: 'С ведущим',    desc: 'Czar выбирает' },
+  { value: 'arena',   label: 'Арена',        desc: 'Голоса за раунды' },
 ]
 const CATEGORIES = [
-  { value: 'all',       label: 'Всё вместе',   icon: '🎲' },
-  { value: 'work',      label: 'Работа',        icon: '💼' },
-  { value: 'school',    label: 'Школа',         icon: '🎒' },
-  { value: 'relations', label: 'Отношения',     icon: '❤️' },
-  { value: 'internet',  label: 'Интернет',      icon: '🌐' },
+  { value: 'all',       label: 'Всё вместе'  },
+  { value: 'work',      label: 'Работа'       },
+  { value: 'school',    label: 'Школа'        },
+  { value: 'relations', label: 'Отношения'    },
+  { value: 'internet',  label: 'Интернет'     },
 ]
 const TIMER_PLAY = [15, 30, 45, 60, 75, 90, 105, 120]
 const TIMER_VOTE = [15, 30, 45, 60]
 
-// Floating card decorations
 const FLOATING_MEMES = [
-  { url: 'https://i.imgflip.com/1bij.jpg',    style: { top: '12%', left: '4%',  rotate: '-8deg',  scale: 0.8, delay: '0s'  }},
-  { url: 'https://i.imgflip.com/4t0m5.jpg',   style: { top: '20%', right: '3%', rotate: '10deg',  scale: 0.75, delay: '0.5s'}},
-  { url: 'https://i.imgflip.com/3lhx3p.jpg',  style: { top: '60%', left: '2%',  rotate: '5deg',   scale: 0.7, delay: '1s'  }},
-  { url: 'https://i.imgflip.com/2wifvo.jpg',  style: { top: '65%', right: '2%', rotate: '-12deg', scale: 0.72, delay: '1.5s'}},
-  { url: 'https://i.imgflip.com/1ur9b0.jpg',  style: { top: '38%', left: '1%',  rotate: '14deg',  scale: 0.65, delay: '0.8s'}},
+  { url: 'https://i.imgflip.com/1bij.jpg',    style: { top: '12%', left: '4%',  rotate: '-8deg',  scale: 0.8,  delay: '0s'   }},
+  { url: 'https://i.imgflip.com/4t0m5.jpg',   style: { top: '20%', right: '3%', rotate: '10deg',  scale: 0.75, delay: '0.5s' }},
+  { url: 'https://i.imgflip.com/3lhx3p.jpg',  style: { top: '60%', left: '2%',  rotate: '5deg',   scale: 0.7,  delay: '1s'   }},
+  { url: 'https://i.imgflip.com/2wifvo.jpg',  style: { top: '65%', right: '2%', rotate: '-12deg', scale: 0.72, delay: '1.5s' }},
+  { url: 'https://i.imgflip.com/1ur9b0.jpg',  style: { top: '38%', left: '1%',  rotate: '14deg',  scale: 0.65, delay: '0.8s' }},
 ]
 
 function FloatingCard({ url, style }) {
   return (
-    <div style={{
+    <div className="floating-card-hero" style={{
       position: 'absolute',
       top: style.top, left: style.left, right: style.right,
       width: 110,
@@ -47,7 +47,7 @@ function FloatingCard({ url, style }) {
       pointerEvents: 'none',
       zIndex: 0,
     }}>
-      <img src={url} alt="" style={{ width: '100%', display: 'block', aspectRatio: '1', objectFit: 'cover' }} />
+      <img src={url} alt="" referrerPolicy="no-referrer" style={{ width: '100%', display: 'block', aspectRatio: '1', objectFit: 'cover' }} />
       <style>{`
         @keyframes floatCard {
           0%,100% { transform: rotate(${style.rotate}) scale(${style.scale}) translateY(0px); }
@@ -63,7 +63,7 @@ export default function HomePage() {
   const { setRoom } = useGame()
   const navigate = useNavigate()
   const { toasts, addToast } = useToast()
-  const [tab, setTab] = useState('join')
+  const [tab, setTab] = useState('public')
   const [joinCode, setJoinCode] = useState('')
   const [nickname, setNickname] = useState('')
   const [loading, setLoading] = useState(false)
@@ -72,6 +72,7 @@ export default function HomePage() {
     mode: 'no_czar', category: 'all',
     timer_play: 60, timer_vote: 30,
     cards_count: 7, penalty_count: 1,
+    rounds_count: 10,
     is_public: false, custom_situations: '',
   })
 
@@ -123,10 +124,10 @@ export default function HomePage() {
       <Navbar />
 
       {/* HERO */}
-      <div style={{ position: 'relative', overflow: 'hidden', padding: '80px 0 64px' }}>
+      <div style={{ position: 'relative', overflow: 'hidden', padding: 'clamp(40px, 8vw, 80px) 0 clamp(32px, 6vw, 64px)' }}>
         {FLOATING_MEMES.map((m, i) => <FloatingCard key={i} {...m} />)}
 
-        <div style={{ textAlign: 'center', position: 'relative', zIndex: 1 }}>
+        <div style={{ textAlign: 'center', position: 'relative', zIndex: 1, padding: '0 16px' }}>
           <div style={{
             display: 'inline-flex', alignItems: 'center', gap: 8,
             background: 'rgba(139,92,246,0.12)', border: '1px solid rgba(139,92,246,0.25)',
@@ -134,22 +135,22 @@ export default function HomePage() {
             fontSize: 12, fontWeight: 700, color: 'var(--purple-light)',
             textTransform: 'uppercase', letterSpacing: '0.1em',
           }}>
-            <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--green)', boxShadow: '0 0 8px var(--green)' }} />
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--green)', boxShadow: '0 0 8px var(--green)', flexShrink: 0 }} />
             Мультиплеер · До 8 игроков
           </div>
 
-          <h1 style={{ fontSize: 'clamp(48px, 8vw, 80px)', fontWeight: 900, lineHeight: 1.05, marginBottom: 20 }}>
+          <h1 style={{ fontSize: 'clamp(38px, 8vw, 80px)', fontWeight: 900, lineHeight: 1.05, marginBottom: 20 }}>
             <span className="gradient-text">Meme Battle</span>
           </h1>
 
-          <p style={{ fontSize: 18, color: 'var(--text-2)', maxWidth: 480, margin: '0 auto 40px', lineHeight: 1.6 }}>
+          <p style={{ fontSize: 'clamp(15px, 3vw, 18px)', color: 'var(--text-2)', maxWidth: 480, margin: '0 auto 36px', lineHeight: 1.6 }}>
             Отвечай на ситуации мемами из своей колоды.<br />
             Побеждай — и избавляйся от карт первым.
           </p>
 
           {!user && (
-            <div style={{ display: 'flex', gap: 10, justifyContent: 'center', marginBottom: 32 }}>
-              <Link to="/register" className="btn btn-primary btn-lg">🚀 Регистрация</Link>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'center', marginBottom: 32, flexWrap: 'wrap' }}>
+              <Link to="/register" className="btn btn-primary btn-lg">Регистрация</Link>
               <Link to="/login" className="btn btn-secondary btn-lg">Войти</Link>
             </div>
           )}
@@ -175,11 +176,11 @@ export default function HomePage() {
         )}
 
         <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 32 }}>
-          <div className="tabs">
+          <div className="tabs" style={{ width: '100%', maxWidth: 460 }}>
             {[
-              { key: 'join',   label: '🔑 По коду'  },
-              { key: 'create', label: '✨ Создать'   },
-              { key: 'public', label: '🌍 Публичные' },
+              { key: 'join',   label: 'По коду'   },
+              { key: 'create', label: 'Создать'    },
+              { key: 'public', label: 'Публичные'  },
             ].map(t => (
               <button key={t.key} className={`tab-btn ${tab === t.key ? 'active' : ''}`} onClick={() => setTab(t.key)}>
                 {t.label}
@@ -188,11 +189,11 @@ export default function HomePage() {
           </div>
         </div>
 
-        <div style={{ maxWidth: tab === 'create' ? 680 : 500, margin: '0 auto' }}>
+        <div style={{ maxWidth: tab === 'create' ? 640 : 500, margin: '0 auto' }}>
 
           {/* JOIN TAB */}
           {tab === 'join' && (
-            <div className="glass" style={{ padding: 32 }}>
+            <div className="glass" style={{ padding: 'clamp(20px, 5vw, 32px)' }}>
               <h2 style={{ fontWeight: 700, fontSize: 22, marginBottom: 24 }}>Войти в комнату</h2>
               <div style={{ marginBottom: 24 }}>
                 <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 10 }}>
@@ -204,36 +205,35 @@ export default function HomePage() {
                   value={joinCode}
                   onChange={e => setJoinCode(e.target.value.toUpperCase())}
                   maxLength={6}
-                  style={{ fontSize: 32, letterSpacing: 12, textAlign: 'center', fontFamily: "'Space Grotesk',sans-serif", fontWeight: 700 }}
+                  style={{ fontSize: 28, letterSpacing: 10, textAlign: 'center', fontFamily: "'Space Grotesk',sans-serif", fontWeight: 700 }}
                   onKeyDown={e => e.key === 'Enter' && handleJoin()}
                 />
               </div>
               <button className="btn btn-primary btn-lg w-full" onClick={handleJoin} disabled={loading}>
-                {loading ? <><div className="spinner" style={{ width:18,height:18,borderWidth:2 }} /> Входим...</> : '🎮 Войти в комнату'}
+                {loading ? <><div className="spinner" style={{ width: 18, height: 18, borderWidth: 2 }} /> Входим...</> : 'Войти в комнату'}
               </button>
             </div>
           )}
 
           {/* CREATE TAB */}
           {tab === 'create' && (
-            <div className="glass" style={{ padding: 32 }}>
+            <div className="glass" style={{ padding: 'clamp(20px, 5vw, 32px)' }}>
               <h2 style={{ fontWeight: 700, fontSize: 22, marginBottom: 24 }}>Создать комнату</h2>
 
               {/* Mode */}
               <div style={{ marginBottom: 20 }}>
-                <label style={{ display:'block', fontSize:11, fontWeight:700, color:'var(--text-3)', textTransform:'uppercase', letterSpacing:'0.1em', marginBottom:10 }}>
+                <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 10 }}>
                   Режим игры
                 </label>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <div className="mode-grid">
                   {MODES.map(m => (
                     <button key={m.value} onClick={() => pf('mode', m.value)} style={{
-                      padding: '14px 16px', borderRadius: 12, border: '1.5px solid',
+                      padding: '12px 14px', borderRadius: 12, border: '1.5px solid',
                       borderColor: form.mode === m.value ? 'var(--purple)' : 'var(--glass-border)',
                       background: form.mode === m.value ? 'var(--purple-dim)' : 'var(--glass)',
                       cursor: 'pointer', textAlign: 'left', transition: 'all 0.15s',
                     }}>
-                      <div style={{ fontSize: 20, marginBottom: 4 }}>{m.icon}</div>
-                      <div style={{ fontWeight: 700, fontSize: 14, color: form.mode === m.value ? 'var(--purple-light)' : 'var(--text)' }}>{m.label}</div>
+                      <div style={{ fontWeight: 700, fontSize: 14, color: form.mode === m.value ? 'var(--purple-light)' : 'var(--text)', marginBottom: 2 }}>{m.label}</div>
                       <div style={{ fontSize: 12, color: 'var(--text-3)' }}>{m.desc}</div>
                     </button>
                   ))}
@@ -242,26 +242,26 @@ export default function HomePage() {
 
               {/* Category */}
               <div style={{ marginBottom: 20 }}>
-                <label style={{ display:'block', fontSize:11, fontWeight:700, color:'var(--text-3)', textTransform:'uppercase', letterSpacing:'0.1em', marginBottom:10 }}>
+                <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 10 }}>
                   Категория ситуаций
                 </label>
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                   {CATEGORIES.map(c => (
                     <button key={c.value} onClick={() => pf('category', c.value)} style={{
-                      padding: '8px 14px', borderRadius: 20, border: '1.5px solid',
+                      padding: '7px 14px', borderRadius: 20, border: '1.5px solid',
                       borderColor: form.category === c.value ? 'var(--cyan)' : 'var(--glass-border)',
                       background: form.category === c.value ? 'rgba(6,182,212,0.1)' : 'var(--glass)',
                       color: form.category === c.value ? 'var(--cyan-light)' : 'var(--text-2)',
                       cursor: 'pointer', fontSize: 13, fontWeight: 600, transition: 'all 0.15s',
                     }}>
-                      {c.icon} {c.label}
+                      {c.label}
                     </button>
                   ))}
                 </div>
               </div>
 
-              {/* Sliders row */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 }}>
+              {/* Settings */}
+              <div className="settings-grid" style={{ marginBottom: 20 }}>
                 <div className="form-group" style={{ marginBottom: 0 }}>
                   <label>Таймер хода</label>
                   <select className="input" value={form.timer_play} onChange={e => pf('timer_play', +e.target.value)}>
@@ -277,36 +277,42 @@ export default function HomePage() {
                 <div className="form-group" style={{ marginBottom: 0 }}>
                   <label>Карт в колоде</label>
                   <select className="input" value={form.cards_count} onChange={e => pf('cards_count', +e.target.value)}>
-                    {[5,6,7,8,9,10].map(n => <option key={n} value={n}>{n} карт</option>)}
+                    {[5, 6, 7, 8, 9, 10].map(n => <option key={n} value={n}>{n} карт</option>)}
                   </select>
                 </div>
                 <div className="form-group" style={{ marginBottom: 0 }}>
-                  <label>Штраф за проигрыш</label>
-                  <select className="input" value={form.penalty_count} onChange={e => pf('penalty_count', +e.target.value)}>
-                    <option value={1}>1 карта</option>
-                    <option value={2}>2 карты</option>
-                  </select>
+                  <label>{form.mode === 'arena' ? 'Раундов' : 'Штраф за проигрыш'}</label>
+                  {form.mode === 'arena' ? (
+                    <select className="input" value={form.rounds_count} onChange={e => pf('rounds_count', +e.target.value)}>
+                      {[5, 8, 10, 15, 20].map(n => <option key={n} value={n}>{n} раундов</option>)}
+                    </select>
+                  ) : (
+                    <select className="input" value={form.penalty_count} onChange={e => pf('penalty_count', +e.target.value)}>
+                      <option value={1}>1 карта</option>
+                      <option value={2}>2 карты</option>
+                    </select>
+                  )}
                 </div>
               </div>
 
               {/* Privacy */}
               <div style={{ marginBottom: 20 }}>
-                <label style={{ display:'block', fontSize:11, fontWeight:700, color:'var(--text-3)', textTransform:'uppercase', letterSpacing:'0.1em', marginBottom:10 }}>
+                <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 10 }}>
                   Тип комнаты
                 </label>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                   {[
-                    { v: false, label: '🔒 Приватная', desc: 'Только по коду' },
-                    { v: true,  label: '🌍 Публичная',  desc: 'Любой может войти' },
+                    { v: false, label: 'Приватная', desc: 'Только по коду' },
+                    { v: true,  label: 'Публичная',  desc: 'Любой может войти' },
                   ].map(o => (
                     <button key={String(o.v)} onClick={() => pf('is_public', o.v)} style={{
-                      padding: '12px 16px', borderRadius: 12, border: '1.5px solid',
+                      padding: '11px 14px', borderRadius: 12, border: '1.5px solid',
                       borderColor: form.is_public === o.v ? 'var(--purple)' : 'var(--glass-border)',
                       background: form.is_public === o.v ? 'var(--purple-dim)' : 'var(--glass)',
                       cursor: 'pointer', textAlign: 'left', transition: 'all 0.15s',
                     }}>
-                      <div style={{ fontWeight: 700, fontSize: 14, color: form.is_public === o.v ? 'var(--purple-light)' : 'var(--text)' }}>{o.label}</div>
-                      <div style={{ fontSize: 12, color: 'var(--text-3)' }}>{o.desc}</div>
+                      <div style={{ fontWeight: 700, fontSize: 13, color: form.is_public === o.v ? 'var(--purple-light)' : 'var(--text)' }}>{o.label}</div>
+                      <div style={{ fontSize: 11, color: 'var(--text-3)' }}>{o.desc}</div>
                     </button>
                   ))}
                 </div>
@@ -325,7 +331,7 @@ export default function HomePage() {
               </div>
 
               <button className="btn btn-primary btn-lg w-full" onClick={handleCreate} disabled={loading}>
-                {loading ? <><div className="spinner" style={{width:18,height:18,borderWidth:2}} /> Создаём...</> : '✨ Создать комнату'}
+                {loading ? <><div className="spinner" style={{ width: 18, height: 18, borderWidth: 2 }} /> Создаём...</> : 'Создать комнату'}
               </button>
             </div>
           )}
@@ -335,34 +341,34 @@ export default function HomePage() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               {publicRooms.length === 0 && (
                 <div className="glass" style={{ padding: 48, textAlign: 'center', color: 'var(--text-3)' }}>
-                  <div style={{ fontSize: 48, marginBottom: 12 }}>🌵</div>
+                  <div style={{ fontSize: 40, marginBottom: 12, opacity: 0.4 }}>[ ]</div>
                   Нет публичных комнат
                 </div>
               )}
               {publicRooms.map(r => (
-                <div key={r.id} className="glass" style={{ padding: '16px 20px', display: 'flex', alignItems: 'center', gap: 16 }}>
+                <div key={r.id} className="glass" style={{ padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 14 }}>
                   <div style={{
-                    width: 44, height: 44, borderRadius: 12,
+                    width: 42, height: 42, borderRadius: 12,
                     background: 'linear-gradient(135deg,var(--purple),var(--pink))',
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                     fontWeight: 800, fontSize: 16, fontFamily: "'Space Grotesk',sans-serif",
-                    flexShrink: 0,
+                    flexShrink: 0, color: '#fff',
                   }}>
                     {r.code[0]}
                   </div>
-                  <div style={{ flex: 1 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontWeight: 700, fontFamily: "'Space Grotesk',sans-serif", letterSpacing: 2 }}>{r.code}</div>
                     <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 2 }}>
-                      {r.mode === 'czar' ? '👑 С ведущим' : '🗳️ Голосование'} · {r.player_count}/8 игроков
+                      {r.mode === 'czar' ? 'С ведущим' : r.mode === 'arena' ? 'Арена' : 'Голосование'} · {r.player_count}/8 игроков
                     </div>
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <div style={{ display:'flex', gap:3 }}>
-                      {Array.from({length:8}).map((_,i) => (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                    <div style={{ display: 'flex', gap: 3 }}>
+                      {Array.from({ length: 8 }).map((_, i) => (
                         <div key={i} style={{
-                          width:6, height:6, borderRadius:'50%',
+                          width: 5, height: 5, borderRadius: '50%',
                           background: i < r.player_count ? 'var(--green)' : 'var(--glass-border)',
-                          boxShadow: i < r.player_count ? '0 0 6px var(--green)' : 'none',
+                          boxShadow: i < r.player_count ? '0 0 5px var(--green)' : 'none',
                         }} />
                       ))}
                     </div>
@@ -373,33 +379,35 @@ export default function HomePage() {
                 </div>
               ))}
               <button className="btn btn-secondary w-full" onClick={() => getPublicRooms().then(r => setPublicRooms(r.data))}>
-                🔄 Обновить
+                Обновить
               </button>
             </div>
           )}
         </div>
 
         {/* FEATURES */}
-        <div style={{ marginTop: 80 }}>
-          <div style={{ textAlign: 'center', marginBottom: 40 }}>
-            <h2 style={{ fontSize: 32, fontWeight: 800 }}>Как играть?</h2>
+        <div style={{ marginTop: 'clamp(40px, 8vw, 80px)' }}>
+          <div style={{ textAlign: 'center', marginBottom: 36 }}>
+            <h2 style={{ fontSize: 'clamp(24px, 5vw, 32px)', fontWeight: 800 }}>Как играть?</h2>
             <p style={{ color: 'var(--text-2)', marginTop: 8 }}>Три фазы — три шанса победить</p>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 20 }}>
+          <div className="features-grid">
             {[
-              { icon: '🃏', color: 'var(--purple)', title: 'Сыграй карту', desc: 'Выбери лучший мем из своей руки для текущей ситуации. Успей до таймера!' },
-              { icon: '🗳️', color: 'var(--pink)',   title: 'Проголосуй',   desc: 'Все мемы раскрываются анонимно. Голосуй за лучший — только не за себя.' },
-              { icon: '🏆', color: 'var(--cyan)',   title: 'Победи',       desc: 'Победитель раунда избавляется от карты. Первый без карт — выигрывает.' },
+              { color: 'var(--purple)', title: 'Сыграй карту', desc: 'Выбери лучший мем из своей руки для текущей ситуации. Успей до таймера!' },
+              { color: 'var(--pink)',   title: 'Проголосуй',   desc: 'Все мемы раскрываются анонимно. Голосуй за лучший — только не за себя.' },
+              { color: 'var(--cyan)',   title: 'Победи',       desc: 'Победитель раунда избавляется от карты. Первый без карт — выигрывает.' },
             ].map((f, i) => (
-              <div key={i} className="glass" style={{ padding: 28, textAlign: 'center' }}>
+              <div key={i} className="glass" style={{ padding: 'clamp(18px, 4vw, 28px)', textAlign: 'center' }}>
                 <div style={{
-                  width: 56, height: 56, borderRadius: 16, margin: '0 auto 16px',
+                  width: 48, height: 48, borderRadius: 14, margin: '0 auto 14px',
                   background: `${f.color}20`, border: `1.5px solid ${f.color}40`,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 22, fontWeight: 800, fontFamily: "'Space Grotesk',sans-serif",
+                  color: f.color,
                 }}>
-                  {f.icon}
+                  {i + 1}
                 </div>
-                <h3 style={{ fontWeight: 700, fontSize: 18, marginBottom: 8 }}>{f.title}</h3>
+                <h3 style={{ fontWeight: 700, fontSize: 17, marginBottom: 8 }}>{f.title}</h3>
                 <p style={{ color: 'var(--text-2)', fontSize: 14, lineHeight: 1.6 }}>{f.desc}</p>
               </div>
             ))}

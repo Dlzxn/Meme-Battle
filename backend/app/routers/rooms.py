@@ -32,6 +32,7 @@ async def create_room(data: RoomCreate, db: AsyncSession = Depends(get_db), user
         timer_vote=data.timer_vote,
         cards_count=data.cards_count,
         penalty_count=data.penalty_count,
+        rounds_count=data.rounds_count,
         is_public=data.is_public,
         custom_situations=data.custom_situations,
     )
@@ -121,12 +122,30 @@ async def list_public_rooms(db: AsyncSession = Depends(get_db)):
                 timer_vote=r.timer_vote,
                 cards_count=r.cards_count,
                 penalty_count=r.penalty_count,
+                rounds_count=r.rounds_count,
                 is_public=r.is_public,
                 category=r.category.value,
                 player_count=len(active),
             )
         )
     return out
+
+
+@router.get("/{code}/status")
+async def room_status(code: str, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(Room).where(Room.code == code.upper()).options(selectinload(Room.players))
+    )
+    room = result.scalar_one_or_none()
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+    active = [p for p in room.players if p.is_connected]
+    return {
+        "code": room.code,
+        "status": room.status.value,
+        "mode": room.mode.value,
+        "player_count": len(active),
+    }
 
 
 @router.delete("/{code}/kick/{player_id}")

@@ -7,5 +7,7 @@ export const joinRoom = (code, nickname) =>
 
 export const getPublicRooms = () => api.get('/rooms/public')
 
+export const getRoomStatus = (code) => api.get(`/rooms/${code}/status`)
+
 export const kickPlayer = (code, playerId) =>
   api.delete(`/rooms/${code}/kick/${playerId}`)

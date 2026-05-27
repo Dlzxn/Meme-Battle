@@ -726,3 +726,152 @@ select.input {
   border: 1.5px solid rgba(255,255,255,0.12);
 }
 .fly-meme-inner img { width:100%; height:100%; object-fit:cover; display:block; }
+
+/* ═══════════════════════════════════════════════════
+   LAYOUT HELPERS (used in game/lobby pages)
+═══════════════════════════════════════════════════ */
+.game-grid {
+  display: grid;
+  grid-template-columns: 1fr 260px;
+  gap: 28px;
+  align-items: start;
+}
+.game-sidebar { display: flex; flex-direction: column; gap: 16px; }
+
+.lobby-grid {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: 24px;
+  align-items: start;
+}
+
+.features-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+}
+
+.mode-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+/* ═══════════════════════════════════════════════════
+   MOBILE — max 768px
+═══════════════════════════════════════════════════ */
+@media (max-width: 768px) {
+
+  /* Base */
+  .container { padding: 0 14px; }
+
+  /* Navbar */
+  .navbar { padding: 0 14px; height: 52px; }
+  .navbar-logo { font-size: 17px; gap: 8px; }
+  .navbar-logo-icon { width: 30px; height: 30px; font-size: 14px; border-radius: 8px; }
+  .navbar-links { gap: 2px; }
+  .navbar-hide-mobile { display: none !important; }
+
+  /* Buttons */
+  .btn { min-height: 40px; }
+  .btn-lg  { padding: 13px 22px; font-size: 15px; }
+  .btn-xl  { padding: 14px 28px; font-size: 15px; }
+  .btn-sm  { padding: 7px 12px; font-size: 12px; }
+
+  /* Tabs */
+  .tabs { width: 100%; }
+  .tab-btn { padding: 9px 12px; font-size: 12px; flex: 1; }
+
+  /* Game grid */
+  .game-grid { grid-template-columns: 1fr; gap: 20px; }
+  .game-sidebar { flex-direction: row; flex-wrap: wrap; }
+
+  /* Lobby grid */
+  .lobby-grid { grid-template-columns: 1fr; }
+
+  /* Features */
+  .features-grid { grid-template-columns: 1fr; gap: 12px; }
+
+  /* Mode selector */
+  .mode-grid { grid-template-columns: 1fr; }
+
+  /* Settings 2-col */
+  .settings-grid { grid-template-columns: 1fr 1fr; gap: 10px; }
+
+  /* Cards */
+  .hand-grid {
+    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+    gap: 8px;
+  }
+  .plays-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+  }
+  .meme-card { min-width: 0 !important; }
+
+  /* Situation card */
+  .situation-card { padding: 18px 16px; font-size: 17px; }
+
+  /* Room code */
+  .room-code { font-size: 28px; letter-spacing: 5px; }
+
+  /* Timer */
+  .timer-number { font-size: 24px; }
+
+  /* Player badge */
+  .player-badge { padding: 8px 10px; gap: 8px; }
+  .player-avatar { width: 30px; height: 30px; font-size: 12px; }
+
+  /* Toast */
+  .toast-container { right: 12px; bottom: 80px; left: 12px; }
+  .toast { max-width: 100%; }
+
+  /* Page padding */
+  .page-content-mobile { padding-top: 20px !important; padding-bottom: 32px !important; }
+
+  /* Active game banner */
+  .active-banner-mobile {
+    left: 12px !important;
+    right: 12px !important;
+    bottom: 16px !important;
+    max-width: none !important;
+  }
+
+  /* Orbs — reduce on mobile */
+  .orb { filter: blur(60px); }
+  [data-theme="light"] .orb-1 { width: 300px; height: 300px; }
+  [data-theme="light"] .orb-2 { width: 260px; height: 260px; }
+  [data-theme="dark"]  .orb-1 { width: 340px; height: 340px; }
+  [data-theme="dark"]  .orb-2 { width: 280px; height: 280px; }
+  .orb-3, .orb-4, .orb-5 { display: none; }
+
+  /* Floating hero cards */
+  .floating-card-hero { display: none !important; }
+}
+
+/* ═══════════════════════════════════════════════════
+   MOBILE — max 480px (small phones)
+═══════════════════════════════════════════════════ */
+@media (max-width: 480px) {
+  .hand-grid {
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+  }
+  .plays-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+  }
+  .situation-card { font-size: 15px; padding: 14px; }
+  .room-code { font-size: 24px; letter-spacing: 3px; }
+
+  .settings-grid { grid-template-columns: 1fr; }
+
+  .meme-card-footer { font-size: 10px; padding: 5px 6px; }
+  .meme-card-special-badge { font-size: 9px; padding: 2px 6px; }
+}
