@@ -45,6 +45,7 @@ class RoomCreate(BaseModel):
     timer_vote: int = 30
     cards_count: int = 7
     penalty_count: int = 1
+    rounds_count: int = 10
     is_public: bool = False
     nickname: str
     custom_situations: Optional[str] = None
@@ -87,6 +88,7 @@ class RoomOut(BaseModel):
     timer_vote: int
     cards_count: int
     penalty_count: int
+    rounds_count: int
     is_public: bool
     category: str
     player_count: int

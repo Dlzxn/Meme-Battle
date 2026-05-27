@@ -19,6 +19,18 @@ from app.auth import hash_password, create_access_token
 TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
 
 
+# ── Suppress external side-effects globally ───────────────────
+
+
+@pytest.fixture(autouse=True)
+def _suppress_telegram(monkeypatch):
+    """Prevent tests from making real Telegram HTTP requests."""
+    import app.telegram as tg
+    monkeypatch.setattr(tg, "_chat_id", None, raising=False)
+    with patch("app.telegram.httpx.AsyncClient"):
+        yield
+
+
 # ── Engine & Session ──────────────────────────────────────────
 
 

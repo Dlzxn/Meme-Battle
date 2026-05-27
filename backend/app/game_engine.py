@@ -17,6 +17,36 @@ from app.connection_manager import manager
 
 logger = logging.getLogger(__name__)
 
+# Strong-reference set so background tasks aren't GC'd before they finish.
+_bg_tasks: set = set()
+
+# Rounds that have been finalized early (all voted before timer expired).
+# vote_timer / play_timer check this to stop broadcasting stale ticks.
+_cancelled_rounds: set[int] = set()
+
+
+def _bg(coro) -> asyncio.Task:
+    t = asyncio.create_task(coro)
+    _bg_tasks.add(t)
+    t.add_done_callback(_bg_tasks.discard)
+    t.add_done_callback(_log_bg_error)
+    return t
+
+
+def _log_bg_error(task: asyncio.Task) -> None:
+    if task.cancelled():
+        return
+    try:
+        exc = task.exception()
+    except Exception:
+        return
+    if exc:
+        logger.exception(
+            "Background task failed: %s", exc,
+            exc_info=(type(exc), exc, exc.__traceback__),
+        )
+
+
 PACK_UNLOCK_THRESHOLDS = {10: "classic_internet", 25: "russian_segment", 50: "gaming"}
 SPECIAL_CARD_CHANCE = 0.08
 
@@ -88,6 +118,23 @@ def player_card_list(player: Player) -> list[dict]:
 
 async def broadcast_room_state(db: AsyncSession, room_code: str) -> None:
     players = await get_active_players(db, room_code)
+    room_q = await db.execute(select(Room).where(Room.code == room_code))
+    room = room_q.scalar_one_or_none()
+
+    config: dict = {}
+    if room:
+        config = {
+            "mode": room.mode.value,
+            "category": room.category.value,
+            "timer_play": room.timer_play,
+            "timer_vote": room.timer_vote,
+            "cards_count": room.cards_count,
+            "penalty_count": room.penalty_count,
+            "rounds_count": room.rounds_count,
+            "is_public": room.is_public,
+            "custom_situations": room.custom_situations,
+        }
+
     await manager.broadcast(
         room_code,
         {
@@ -102,7 +149,8 @@ async def broadcast_room_state(db: AsyncSession, room_code: str) -> None:
                         "card_count": len(p.cards),
                     }
                     for p in players
-                ]
+                ],
+                "config": config,
             },
         },
     )
@@ -112,7 +160,15 @@ async def pick_situation(db: AsyncSession, room: Room, used_ids: list[int]) -> t
     if room.custom_situations:
         lines = [ln.strip() for ln in room.custom_situations.splitlines() if ln.strip()]
         if lines:
-            return random.choice(lines), None
+            used_texts_q = await db.execute(
+                select(Round.situation_text)
+                .where(Round.room_id == room.id, Round.situation_text.in_(lines))
+            )
+            used_texts = set(used_texts_q.scalars().all())
+            remaining = [l for l in lines if l not in used_texts]
+            if remaining:
+                return random.choice(remaining), None
+            # All custom situations exhausted — fall through to DB situations
 
     query = select(Situation)
     if room.category != SituationCategory.all:
@@ -131,10 +187,31 @@ async def pick_situation(db: AsyncSession, room: Room, used_ids: list[int]) -> t
     return (sit.text, sit.id) if sit else ("Что бы вы сделали?", None)
 
 
+async def clear_player_cards(db: AsyncSession, player_id: int) -> None:
+    """Remove all cards from a player's hand."""
+    await db.execute(
+        select(PlayerCard).where(PlayerCard.player_id == player_id)
+    )
+    from sqlalchemy import delete as sa_delete
+    await db.execute(sa_delete(PlayerCard).where(PlayerCard.player_id == player_id))
+
+
 async def start_round(db: AsyncSession, room: Room, room_code: str, round_number: int) -> None:
     players = await get_active_players(db, room_code)
     if not players:
         return
+
+    # In arena mode, deal fresh cards to all players at the start of each round
+    if room.mode == GameMode.arena:
+        for p in players:
+            await clear_player_cards(db, p.id)
+        await db.flush()
+        for p in players:
+            p.cards = []  # clear identity map
+            await deal_cards(db, p, room.cards_count)
+        await db.flush()
+        # Reload with fresh cards
+        players = await get_active_players(db, room_code)
 
     used_q = await db.execute(
         select(Round.situation_id).where(
@@ -203,7 +280,7 @@ async def start_round(db: AsyncSession, room: Room, room_code: str, round_number
             },
         )
 
-    asyncio.create_task(play_timer(room.id, room_code, round_.id, room.timer_play))
+    _bg(play_timer(room.id, room_code, round_.id, room.timer_play))
 
 
 # ──────────────────────────────────────────────────────────────
@@ -213,9 +290,13 @@ async def start_round(db: AsyncSession, room: Room, room_code: str, round_number
 async def play_timer(room_id: int, room_code: str, round_id: int, seconds: int) -> None:
     for tick in range(seconds, 0, -1):
         await asyncio.sleep(1)
+        if round_id in _cancelled_rounds:
+            return
         await manager.broadcast(
             room_code, {"type": "timer_tick", "payload": {"phase": "play", "seconds": tick - 1}}
         )
+    if round_id in _cancelled_rounds:
+        return
     async with AsyncSessionLocal() as db:
         await _auto_play_missing(db, room_code, round_id)
 
@@ -223,9 +304,13 @@ async def play_timer(room_id: int, room_code: str, round_id: int, seconds: int) 
 async def vote_timer(room_id: int, room_code: str, round_id: int, seconds: int) -> None:
     for tick in range(seconds, 0, -1):
         await asyncio.sleep(1)
+        if round_id in _cancelled_rounds:
+            return
         await manager.broadcast(
             room_code, {"type": "timer_tick", "payload": {"phase": "vote", "seconds": tick - 1}}
         )
+    if round_id in _cancelled_rounds:
+        return
     async with AsyncSessionLocal() as db:
         await finalize_round(db, room_code, round_id)
 
@@ -255,7 +340,16 @@ async def _auto_play_missing(db: AsyncSession, room_code: str, round_id: int) ->
         await db.flush()
         await manager.broadcast(room_code, {"type": "player_played", "payload": {"player_id": p.id}})
 
-    round_.status = RoundStatus.voting
+    # Atomic update: only proceed if round is still in playing state
+    upd = await db.execute(
+        update(Round)
+        .where(Round.id == round_id, Round.status == RoundStatus.playing)
+        .values(status=RoundStatus.voting)
+        .returning(Round.id)
+    )
+    await db.flush()
+    if upd.scalar_one_or_none() is None:
+        return  # Another path already advanced the round
     await db.commit()
     await _start_voting(db, room_code, round_id)
 
@@ -316,7 +410,37 @@ async def _start_voting(db: AsyncSession, room_code: str, round_id: int) -> None
             },
         )
 
-    asyncio.create_task(vote_timer(room.id, room_code, round_id, room.timer_vote))
+    _bg(vote_timer(room.id, room_code, round_id, room.timer_vote))
+
+
+async def _schedule_next_round(room_code: str, room_id: int, next_round_number: int, delay: float) -> None:
+    await asyncio.sleep(delay)
+    async with AsyncSessionLocal() as db:
+        room = await db.get(Room, room_id)
+        if room and room.status == RoomStatus.playing:
+            await start_round(db, room, room_code, next_round_number)
+
+
+async def _schedule_arena_end(room_code: str, room_id: int, delay: float) -> None:
+    await asyncio.sleep(delay)
+    async with AsyncSessionLocal() as db:
+        room = await db.get(Room, room_id)
+        if not room:
+            return
+        players = await get_active_players(db, room_code)
+        await _end_arena_game(db, room_code, room, players)
+
+
+async def _schedule_game_end(room_code: str, room_id: int, winner_player_id: int, delay: float) -> None:
+    await asyncio.sleep(delay)
+    async with AsyncSessionLocal() as db:
+        room = await db.get(Room, room_id)
+        if not room:
+            return
+        players = await get_active_players(db, room_code)
+        winner = next((p for p in players if p.id == winner_player_id), None)
+        if winner:
+            await _end_game(db, room_code, room, players, winner)
 
 
 async def finalize_round(db: AsyncSession, room_code: str, round_id: int) -> None:
@@ -330,6 +454,8 @@ async def finalize_round(db: AsyncSession, room_code: str, round_id: int) -> Non
     await db.flush()
     if upd.scalar_one_or_none() is None:
         return  # Already finalized
+
+    _cancelled_rounds.add(round_id)  # Stop lingering play/vote timers
 
     round_ = await db.get(Round, round_id)
     room = await db.get(Room, round_.room_id)
@@ -347,7 +473,30 @@ async def finalize_round(db: AsyncSession, room_code: str, round_id: int) -> Non
     plays = list(plays_q.scalars().all())
 
     if not plays:
+        await manager.broadcast(
+            room_code,
+            {
+                "type": "round_result",
+                "payload": {
+                    "round_id": round_id,
+                    "plays": [],
+                    "is_tie": True,
+                    "winners": [],
+                    "losers": [],
+                    "game_over": False,
+                    "round_number": round_.round_number,
+                    "rounds_total": room.rounds_count if room.mode == GameMode.arena else None,
+                },
+            },
+        )
         await db.commit()
+        if room.mode == GameMode.arena:
+            if round_.round_number >= room.rounds_count:
+                _bg(_schedule_arena_end(room_code, room.id, delay=3))
+            else:
+                _bg(_schedule_next_round(room_code, room.id, round_.round_number + 1, delay=5))
+        else:
+            _bg(_schedule_next_round(room_code, room.id, round_.round_number + 1, delay=5))
         return
 
     play_results = []
@@ -375,7 +524,7 @@ async def finalize_round(db: AsyncSession, room_code: str, round_id: int) -> Non
     losers  = [p for p in play_results if p["vote_count"] == min_votes]
     is_tie  = len(winners) > 1 and max_votes == min_votes
 
-    if not is_tie and losers[0]["player_id"] != winners[0]["player_id"]:
+    if room.mode != GameMode.arena and not is_tie and losers[0]["player_id"] != winners[0]["player_id"]:
         # Load loser with cards for penalty logic
         loser_q = await db.execute(
             select(Player)
@@ -389,6 +538,32 @@ async def finalize_round(db: AsyncSession, room_code: str, round_id: int) -> Non
     await db.commit()
 
     players = await get_active_players(db, room_code)
+
+    if room.mode == GameMode.arena:
+        # Arena: game ends after rounds_count rounds
+        game_over = round_.round_number >= room.rounds_count
+        await manager.broadcast(
+            room_code,
+            {
+                "type": "round_result",
+                "payload": {
+                    "round_id": round_id,
+                    "plays": play_results,
+                    "is_tie": is_tie,
+                    "winners": [w["player_id"] for w in winners] if not is_tie else [],
+                    "losers": [],
+                    "game_over": game_over,
+                    "round_number": round_.round_number,
+                    "rounds_total": room.rounds_count,
+                },
+            },
+        )
+        if game_over:
+            _bg(_schedule_arena_end(room_code, room.id, delay=3))
+        else:
+            _bg(_schedule_next_round(room_code, room.id, round_.round_number + 1, delay=5))
+        return
+
     winner_player = next((p for p in players if len(p.cards) == 0), None)
 
     await manager.broadcast(
@@ -407,14 +582,10 @@ async def finalize_round(db: AsyncSession, room_code: str, round_id: int) -> Non
     )
 
     if winner_player:
-        await asyncio.sleep(3)
-        await _end_game(db, room_code, room, players, winner_player)
+        _bg(_schedule_game_end(room_code, room.id, winner_player.id, delay=3))
         return
 
-    await asyncio.sleep(5)
-    room_fresh = await db.get(Room, room.id)
-    if room_fresh and room_fresh.status == RoomStatus.playing:
-        await start_round(db, room_fresh, room_code, round_.round_number + 1)
+    _bg(_schedule_next_round(room_code, room.id, round_.round_number + 1, delay=5))
 
 
 async def _check_skip_penalty(db: AsyncSession, room_code: str, player: Player, room: Room) -> None:
@@ -472,6 +643,61 @@ async def _get_random_memes(db: AsyncSession, count: int, exclude_ids: list[int]
     q = q.order_by(func.random()).limit(count)
     result = await db.execute(q)
     return list(result.scalars().all())
+
+
+async def _end_arena_game(db: AsyncSession, room_code: str, room: Room, players: list[Player]) -> None:
+    """End arena game: tally total votes per player across all rounds."""
+    from sqlalchemy import func as sqlfunc
+    # Count total votes received by each player in this room
+    votes_q = await db.execute(
+        select(Vote.target_player_id, sqlfunc.count(Vote.id).label("total"))
+        .join(Round, Vote.round_id == Round.id)
+        .where(Round.room_id == room.id)
+        .group_by(Vote.target_player_id)
+    )
+    vote_totals: dict[int, int] = {row.target_player_id: row.total for row in votes_q}
+
+    scores = []
+    for p in players:
+        scores.append({
+            "player_id": p.id,
+            "nickname": p.nickname,
+            "votes": vote_totals.get(p.id, 0),
+        })
+    scores.sort(key=lambda x: x["votes"], reverse=True)
+
+    winner = scores[0] if scores else None
+    room.status = RoomStatus.finished
+    await db.commit()
+
+    await manager.broadcast(
+        room_code,
+        {
+            "type": "game_over",
+            "payload": {
+                "winner_id": winner["player_id"] if winner else None,
+                "winner_nickname": winner["nickname"] if winner else "—",
+                "leaderboard": scores,
+                "mode": "arena",
+            },
+        },
+    )
+
+    # Update stats
+    for p in players:
+        if not p.user_id:
+            continue
+        from app.models import GameStats
+        stats_q = await db.execute(select(GameStats).where(GameStats.user_id == p.user_id))
+        stats = stats_q.scalar_one_or_none()
+        if not stats:
+            stats = GameStats(user_id=p.user_id)
+            db.add(stats)
+        stats.games_played += 1
+        if winner and p.id == winner["player_id"]:
+            stats.games_won += 1
+        await db.flush()
+    await db.commit()
 
 
 async def _end_game(

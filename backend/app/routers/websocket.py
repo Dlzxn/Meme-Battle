@@ -36,8 +36,15 @@ async def websocket_endpoint(websocket: WebSocket, room_code: str, player_id: in
         await db.commit()
         await broadcast_room_state(db, room_code)
 
-        # Resend current game state so reconnecting players don't miss situation_dealt
+        # If room is finished (game ended), tell the client to leave
         room = await db.get(Room, player.room_id)
+        if room and room.status == RoomStatus.finished:
+            await manager.send_personal(
+                player_id, room_code,
+                {"type": "room_closed", "payload": {"reason": "finished"}},
+            )
+
+        # Resend current game state so reconnecting players don't miss situation_dealt
         if room and room.status == RoomStatus.playing:
             round_ = await _get_active_round(db, player.room_id)
             if round_:
@@ -86,6 +93,12 @@ async def websocket_endpoint(websocket: WebSocket, room_code: str, player_id: in
                             },
                         },
                     )
+            else:
+                # Between rounds (5-second transition gap) — tell client to wait
+                await manager.send_personal(
+                    player_id, room_code,
+                    {"type": "round_transitioning", "payload": {}},
+                )
 
     try:
         while True:
@@ -131,6 +144,7 @@ async def _dispatch(db: AsyncSession, event_type: str, payload: dict, player: Pl
         "add_reaction": _handle_reaction,
         "czar_pick": _handle_czar_pick,
         "use_special_card": _handle_special_card,
+        "update_config": _handle_update_config,
     }
     handler = handlers.get(event_type)
     if handler:
@@ -156,9 +170,10 @@ async def _handle_start_game(db: AsyncSession, payload: dict, player: Player, ro
     room.status = RoomStatus.playing
     await db.flush()
 
-    # Deal starting cards
-    for p in players:
-        await deal_cards(db, p, room.cards_count)
+    # In arena mode cards are dealt per-round, not at game start
+    if room.mode != GameMode.arena:
+        for p in players:
+            await deal_cards(db, p, room.cards_count)
 
     await db.commit()
 
@@ -269,15 +284,18 @@ async def _handle_vote(db: AsyncSession, payload: dict, player: Player, room_cod
 
     await manager.broadcast(room_code, {"type": "vote_cast", "payload": {"voter_id": player.id}})
 
-    # Check if all voted
+    # Early finalization: end voting when all connected eligible players have voted
     votes_q = await db.execute(select(Vote).where(Vote.round_id == round_.id))
     votes = list(votes_q.scalars().all())
 
     active_players = await get_active_players(db, room_code)
-    plays_q = await db.execute(select(Play).where(Play.round_id == round_.id))
-    plays_count = len(list(plays_q.scalars().all()))
+    eligible_ids = {p.id for p in active_players}
+    if player.room.mode == GameMode.czar and round_.czar_id:
+        eligible_ids.discard(round_.czar_id)
 
-    if len(votes) >= plays_count:
+    voted_ids = {v.voter_id for v in votes}
+
+    if eligible_ids and eligible_ids.issubset(voted_ids):
         await finalize_round(db, room_code, round_.id)
 
 
@@ -377,6 +395,60 @@ async def _handle_special_card(db: AsyncSession, payload: dict, player: Player, 
             )
 
 
+async def _handle_update_config(db: AsyncSession, payload: dict, player: Player, room_code: str) -> None:
+    if not player.is_host:
+        return
+
+    room = await db.get(Room, player.room_id)
+    if not room or room.status != RoomStatus.waiting:
+        return
+
+    allowed = {
+        "mode": ("mode", GameMode),
+        "timer_play": ("timer_play", int),
+        "timer_vote": ("timer_vote", int),
+        "cards_count": ("cards_count", int),
+        "penalty_count": ("penalty_count", int),
+        "rounds_count": ("rounds_count", int),
+        "is_public": ("is_public", bool),
+        "custom_situations": ("custom_situations", str),
+    }
+    for key, (attr, cast) in allowed.items():
+        if key in payload and payload[key] is not None:
+            try:
+                setattr(room, attr, cast(payload[key]))
+            except (ValueError, KeyError):
+                pass
+
+    # Category needs special handling since it's an enum
+    if "category" in payload:
+        from app.models import SituationCategory
+        try:
+            room.category = SituationCategory(payload["category"])
+        except ValueError:
+            pass
+
+    await db.commit()
+
+    await manager.broadcast(
+        room_code,
+        {
+            "type": "config_updated",
+            "payload": {
+                "mode": room.mode.value,
+                "category": room.category.value,
+                "timer_play": room.timer_play,
+                "timer_vote": room.timer_vote,
+                "cards_count": room.cards_count,
+                "penalty_count": room.penalty_count,
+                "rounds_count": room.rounds_count,
+                "is_public": room.is_public,
+                "custom_situations": room.custom_situations,
+            },
+        },
+    )
+
+
 async def _get_active_round(db: AsyncSession, room_id: int) -> Round | None:
     result = await db.execute(
         select(Round)
@@ -395,6 +467,10 @@ async def _handle_disconnect(db: AsyncSession, player_id: int, room_code: str) -
     if not player:
         return
 
+    # If the player already reconnected with a new WebSocket, don't overwrite their connected state.
+    if manager.is_connected(room_code, player_id):
+        return
+
     player.is_connected = False
     room = await db.get(Room, player.room_id)
 
@@ -408,3 +484,26 @@ async def _handle_disconnect(db: AsyncSession, player_id: int, room_code: str) -
 
     await db.commit()
     await broadcast_room_state(db, room_code)
+    await _maybe_close_empty_room(db, player.room_id, room_code)
+
+
+async def _maybe_close_empty_room(db: AsyncSession, room_id: int, room_code: str) -> None:
+    """Close room and notify clients if no players remain connected.
+    Only auto-closes waiting rooms — playing rooms survive temporary disconnects
+    so players can reload without losing their game."""
+    room = await db.get(Room, room_id)
+    if not room or room.status != RoomStatus.waiting:
+        return  # Never auto-close an active game
+
+    result = await db.execute(
+        select(Player)
+        .where(Player.room_id == room_id, Player.is_connected == True)  # noqa: E712
+        .limit(1)
+    )
+    if result.scalar_one_or_none():
+        return
+
+    room.status = RoomStatus.finished
+    await db.commit()
+
+    await manager.broadcast(room_code, {"type": "room_closed", "payload": {"reason": "empty"}})

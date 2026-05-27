@@ -9,7 +9,9 @@ from app.game_engine import (
     deal_cards, get_active_players, player_card_list,
     broadcast_room_state, pick_situation, start_round,
     finalize_round, _check_skip_penalty, _get_random_memes,
-    _end_game, _auto_play_missing, _start_voting,
+    _end_game, _end_arena_game, _auto_play_missing, _start_voting,
+    _schedule_next_round, _schedule_arena_end, _schedule_game_end,
+    vote_timer, play_timer,
 )
 from app.models import (
     Room, Player, Meme, PlayerCard, Round, Play, Vote, Reaction,
@@ -516,3 +518,330 @@ async def test_auto_play_missing_submits_for_idle_player(
     plays_q = await db.execute(select(Play).where(Play.round_id == rnd.id))
     plays = plays_q.scalars().all()
     assert len(plays) == 2  # p2 auto-played
+
+
+async def test_auto_play_skips_czar(db, playing_room, situations, mock_manager, mock_create_task):
+    room, p1, p2 = playing_room
+    room.mode = GameMode.czar
+    room.status = RoomStatus.playing
+
+    rnd = Round(
+        room_id=room.id, situation_text="x", round_number=1,
+        status=RoundStatus.playing, czar_id=p2.id
+    )
+    db.add(rnd)
+    await db.flush()
+    # p1 played, p2 is czar and should not auto-play
+    memes_q = await db.execute(select(Meme).where(Meme.is_special == False).limit(1))  # noqa: E712
+    m = memes_q.scalar_one()
+    db.add(Play(round_id=rnd.id, player_id=p1.id, meme_id=m.id))
+    await db.commit()
+
+    await _auto_play_missing(db, room.code, rnd.id)
+
+    plays_q = await db.execute(select(Play).where(Play.round_id == rnd.id))
+    plays = list(plays_q.scalars().all())
+    player_ids = {pl.player_id for pl in plays}
+    assert p2.id not in player_ids  # czar not auto-played
+
+
+async def test_auto_play_already_finished_round(db, playing_room, mock_manager, mock_create_task):
+    room, p1, p2 = playing_room
+    rnd = Round(room_id=room.id, situation_text="x", round_number=1, status=RoundStatus.finished)
+    db.add(rnd)
+    await db.commit()
+
+    await _auto_play_missing(db, room.code, rnd.id)  # no-op, round already done
+    mock_manager.broadcast.assert_not_called()
+
+
+# ── _schedule_next_round ──────────────────────────────────────
+
+
+async def test_schedule_next_round_calls_start_round(mock_manager):
+    """_schedule_next_round calls start_round when room is still playing."""
+    start_round_calls = []
+
+    fake_room = MagicMock()
+    fake_room.status = RoomStatus.playing
+
+    async def fake_start_round(db, room, code, rn):
+        start_round_calls.append(rn)
+
+    mock_db = AsyncMock()
+    mock_db.__aenter__ = AsyncMock(return_value=mock_db)
+    mock_db.__aexit__ = AsyncMock(return_value=False)
+    mock_db.get = AsyncMock(return_value=fake_room)
+
+    with (
+        patch("app.game_engine.AsyncSessionLocal", return_value=mock_db),
+        patch("app.game_engine.start_round", fake_start_round),
+    ):
+        await _schedule_next_round("CODE1", room_id=1, next_round_number=2, delay=0)
+
+    assert start_round_calls == [2]
+
+
+async def test_schedule_next_round_skips_if_not_playing(mock_manager):
+    """_schedule_next_round does nothing when room is finished."""
+    start_round_calls = []
+
+    fake_room = MagicMock()
+    fake_room.status = RoomStatus.finished
+
+    async def fake_start_round(*a, **kw):
+        start_round_calls.append(True)
+
+    mock_db = AsyncMock()
+    mock_db.__aenter__ = AsyncMock(return_value=mock_db)
+    mock_db.__aexit__ = AsyncMock(return_value=False)
+    mock_db.get = AsyncMock(return_value=fake_room)
+
+    with (
+        patch("app.game_engine.AsyncSessionLocal", return_value=mock_db),
+        patch("app.game_engine.start_round", fake_start_round),
+    ):
+        await _schedule_next_round("CODE2", room_id=2, next_round_number=3, delay=0)
+
+    assert start_round_calls == []
+
+
+async def test_schedule_next_round_skips_if_room_missing(mock_manager):
+    """_schedule_next_round does nothing if room no longer exists."""
+    start_round_calls = []
+
+    mock_db = AsyncMock()
+    mock_db.__aenter__ = AsyncMock(return_value=mock_db)
+    mock_db.__aexit__ = AsyncMock(return_value=False)
+    mock_db.get = AsyncMock(return_value=None)
+
+    with (
+        patch("app.game_engine.AsyncSessionLocal", return_value=mock_db),
+        patch("app.game_engine.start_round", AsyncMock(side_effect=lambda *a, **kw: start_round_calls.append(True))),
+    ):
+        await _schedule_next_round("GONE", room_id=99, next_round_number=2, delay=0)
+
+    assert start_round_calls == []
+
+
+# ── _schedule_arena_end ───────────────────────────────────────
+
+
+async def test_schedule_arena_end_calls_end_arena_game(mock_manager):
+    end_arena_calls = []
+
+    fake_room = MagicMock()
+    fake_room.status = RoomStatus.playing
+
+    async def fake_end_arena(db, room_code, room, players):
+        end_arena_calls.append(room_code)
+
+    mock_db = AsyncMock()
+    mock_db.__aenter__ = AsyncMock(return_value=mock_db)
+    mock_db.__aexit__ = AsyncMock(return_value=False)
+    mock_db.get = AsyncMock(return_value=fake_room)
+
+    with (
+        patch("app.game_engine.AsyncSessionLocal", return_value=mock_db),
+        patch("app.game_engine._end_arena_game", fake_end_arena),
+        patch("app.game_engine.get_active_players", AsyncMock(return_value=[])),
+    ):
+        await _schedule_arena_end("AREN1", room_id=1, delay=0)
+
+    assert end_arena_calls == ["AREN1"]
+
+
+async def test_schedule_arena_end_skips_if_room_missing(mock_manager):
+    end_arena_calls = []
+
+    mock_db = AsyncMock()
+    mock_db.__aenter__ = AsyncMock(return_value=mock_db)
+    mock_db.__aexit__ = AsyncMock(return_value=False)
+    mock_db.get = AsyncMock(return_value=None)
+
+    with (
+        patch("app.game_engine.AsyncSessionLocal", return_value=mock_db),
+        patch("app.game_engine._end_arena_game", AsyncMock(side_effect=lambda *a, **kw: end_arena_calls.append(True))),
+        patch("app.game_engine.get_active_players", AsyncMock(return_value=[])),
+    ):
+        await _schedule_arena_end("AREN2", room_id=99, delay=0)
+
+    assert end_arena_calls == []
+
+
+# ── _schedule_game_end ────────────────────────────────────────
+
+
+async def test_schedule_game_end_calls_end_game_when_winner_found(mock_manager):
+    end_game_calls = []
+
+    fake_winner = MagicMock()
+    fake_winner.id = 42
+
+    fake_room = MagicMock()
+
+    async def fake_end_game(db, room_code, room, players, winner):
+        end_game_calls.append((room_code, winner.id))
+
+    mock_db = AsyncMock()
+    mock_db.__aenter__ = AsyncMock(return_value=mock_db)
+    mock_db.__aexit__ = AsyncMock(return_value=False)
+    mock_db.get = AsyncMock(return_value=fake_room)
+
+    with (
+        patch("app.game_engine.AsyncSessionLocal", return_value=mock_db),
+        patch("app.game_engine._end_game", fake_end_game),
+        patch("app.game_engine.get_active_players", AsyncMock(return_value=[fake_winner])),
+    ):
+        await _schedule_game_end("GEND1", room_id=1, winner_player_id=42, delay=0)
+
+    assert end_game_calls == [("GEND1", 42)]
+
+
+async def test_schedule_game_end_skips_if_winner_disconnected(mock_manager):
+    """If winner left, get_active_players won't include them — no end_game call."""
+    end_game_calls = []
+
+    mock_db = AsyncMock()
+    mock_db.__aenter__ = AsyncMock(return_value=mock_db)
+    mock_db.__aexit__ = AsyncMock(return_value=False)
+    mock_db.get = AsyncMock(return_value=MagicMock())
+
+    with (
+        patch("app.game_engine.AsyncSessionLocal", return_value=mock_db),
+        patch("app.game_engine._end_game", AsyncMock(side_effect=lambda *a, **kw: end_game_calls.append(True))),
+        patch("app.game_engine.get_active_players", AsyncMock(return_value=[])),
+    ):
+        await _schedule_game_end("GEND2", room_id=2, winner_player_id=99, delay=0)
+
+    assert end_game_calls == []
+
+
+# ── finalize_round uses _bg not sleep ────────────────────────
+
+
+async def test_finalize_round_schedules_bg_not_sleep(db, playing_room, mock_manager, mock_create_task):
+    """finalize_round must not await asyncio.sleep — it must schedule _bg() tasks."""
+    room, p1, p2 = playing_room
+
+    memes_q = await db.execute(select(Meme).where(Meme.is_special == False).limit(2))  # noqa: E712
+    memes = list(memes_q.scalars().all())
+
+    rnd = Round(room_id=room.id, situation_text="Test", round_number=1, status=RoundStatus.voting)
+    db.add(rnd)
+    await db.flush()
+    play1 = Play(round_id=rnd.id, player_id=p1.id, meme_id=memes[0].id)
+    play2 = Play(round_id=rnd.id, player_id=p2.id, meme_id=memes[1].id)
+    db.add_all([play1, play2])
+    await db.commit()
+
+    sleep_called = []
+    real_sleep = asyncio.sleep
+
+    async def fake_sleep(t, *a, **kw):
+        sleep_called.append(t)
+        return await real_sleep(0)
+
+    with patch("asyncio.sleep", fake_sleep):
+        await finalize_round(db, room.code, rnd.id)
+
+    assert sleep_called == [], (
+        f"finalize_round called asyncio.sleep({sleep_called}) — "
+        "it should schedule _bg() tasks instead"
+    )
+
+
+# ── vote_timer / play_timer ───────────────────────────────────
+
+
+async def test_vote_timer_calls_finalize_round(mock_manager):
+    """vote_timer calls finalize_round after countdown, using a fresh session."""
+    finalize_calls = []
+
+    async def fake_finalize(db, room_code, round_id):
+        finalize_calls.append((room_code, round_id))
+
+    mock_db = AsyncMock()
+    mock_db.__aenter__ = AsyncMock(return_value=mock_db)
+    mock_db.__aexit__ = AsyncMock(return_value=False)
+
+    real_sleep = asyncio.sleep
+
+    async def instant_sleep(t, *a, **kw):
+        await real_sleep(0)
+
+    with (
+        patch("app.game_engine.AsyncSessionLocal", return_value=mock_db),
+        patch("app.game_engine.finalize_round", fake_finalize),
+        patch("asyncio.sleep", instant_sleep),
+    ):
+        await vote_timer(room_id=1, room_code="VTIME", round_id=42, seconds=2)
+
+    assert finalize_calls == [("VTIME", 42)]
+
+
+async def test_play_timer_calls_auto_play_missing(mock_manager):
+    """play_timer calls _auto_play_missing after countdown."""
+    auto_play_calls = []
+
+    async def fake_auto(db, room_code, round_id):
+        auto_play_calls.append((room_code, round_id))
+
+    mock_db = AsyncMock()
+    mock_db.__aenter__ = AsyncMock(return_value=mock_db)
+    mock_db.__aexit__ = AsyncMock(return_value=False)
+
+    real_sleep = asyncio.sleep
+
+    async def instant_sleep(t, *a, **kw):
+        await real_sleep(0)
+
+    with (
+        patch("app.game_engine.AsyncSessionLocal", return_value=mock_db),
+        patch("app.game_engine._auto_play_missing", fake_auto),
+        patch("asyncio.sleep", instant_sleep),
+    ):
+        await play_timer(room_id=1, room_code="PTIME", round_id=7, seconds=2)
+
+    assert auto_play_calls == [("PTIME", 7)]
+
+
+# ── _end_arena_game ───────────────────────────────────────────
+
+
+async def test_end_arena_game_broadcasts_game_over(db, playing_room, mock_manager, mock_create_task):
+    room, p1, p2 = playing_room
+    room.mode = GameMode.arena
+    await db.commit()
+
+    p1_q = await db.execute(
+        select(Player).where(Player.id == p1.id)
+        .options(selectinload(Player.cards).selectinload(PlayerCard.meme))
+    )
+    p1_loaded = p1_q.scalar_one()
+    p2_q = await db.execute(
+        select(Player).where(Player.id == p2.id)
+        .options(selectinload(Player.cards).selectinload(PlayerCard.meme))
+    )
+    p2_loaded = p2_q.scalar_one()
+
+    await _end_arena_game(db, room.code, room, [p1_loaded, p2_loaded])
+
+    await db.refresh(room)
+    assert room.status == RoomStatus.finished
+
+    broadcast_types = [call[0][1]["type"] for call in mock_manager.broadcast.call_args_list]
+    assert "game_over" in broadcast_types
+
+
+async def test_end_arena_game_no_players(db, room_with_players, mock_manager):
+    room, p1, p2 = room_with_players
+    room.mode = GameMode.arena
+    await db.commit()
+
+    await _end_arena_game(db, room.code, room, [])
+
+    await db.refresh(room)
+    assert room.status == RoomStatus.finished  # still marks finished
+    broadcast_types = [call[0][1]["type"] for call in mock_manager.broadcast.call_args_list]
+    assert "game_over" in broadcast_types

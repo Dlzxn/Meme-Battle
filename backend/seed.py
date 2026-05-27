@@ -1,9 +1,4 @@
-"""Seed database with memes and situations.
-
-Meme source: https://imgflip.com — the world's largest meme generator.
-Top templates fetched via public API (no key required), supplemented with
-curated pack memes hardcoded below.
-"""
+"""Seed database with memes and situations."""
 import asyncio
 import logging
 
@@ -19,175 +14,141 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, Asyn
 from app.config import settings
 from app.database import Base
 from app.models import Meme, Situation, SituationCategory, SpecialType
-import app.models  # noqa: ensure all models registered
+import app.models  # noqa
 
 logger = logging.getLogger(__name__)
 
 engine = create_async_engine(settings.database_url)
 Session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
-# ─── Hardcoded pack memes ────────────────────────────────────────────────────
-# All URLs are public imgflip template images (imgflip.com)
-
+# ─── Popular meme templates (deduplicated by URL) ──────────────────────────
 STARTER_MEMES = [
-    ("https://i.imgflip.com/1bij.jpg", "This Is Fine"),
-    ("https://i.imgflip.com/4t0m5.jpg", "Drake Hotline Bling"),
-    ("https://i.imgflip.com/26jxvz.png", "Distracted Boyfriend"),
-    ("https://i.imgflip.com/1ur9b0.jpg", "Two Buttons"),
-    ("https://i.imgflip.com/3lmzyx.png", "UNO Draw 25"),
-    ("https://i.imgflip.com/30b1gx.jpg", "Epic Handshake"),
-    ("https://i.imgflip.com/2wifvo.jpg", "Surprised Pikachu"),
-    ("https://i.imgflip.com/1e7ql7.jpg", "One Does Not Simply"),
-    ("https://i.imgflip.com/5c7lwq.png", "Always Has Been"),
-    ("https://i.imgflip.com/2gnhut.jpg", "Change My Mind"),
-    ("https://i.imgflip.com/3oevdk.jpg", "Expanding Brain"),
-    ("https://i.imgflip.com/23ls.jpg", "Batman Slapping Robin"),
-    ("https://i.imgflip.com/1g8my4.jpg", "Big Brain"),
-    ("https://i.imgflip.com/2hgfw.jpg", "Hide The Pain Harold"),
-    ("https://i.imgflip.com/9vct.jpg", "Ancient Aliens"),
-    ("https://i.imgflip.com/43a45p.png", "Chad vs Virgin"),
-    ("https://i.imgflip.com/2zo1ki.jpg", "Monkey Puppet"),
-    ("https://i.imgflip.com/1h7in3.jpg", "Think About It"),
-    ("https://i.imgflip.com/1otk96.jpg", "Mocking SpongeBob"),
-    ("https://i.imgflip.com/1yxkcp.jpg", "Roll Safe"),
-    ("https://i.imgflip.com/3s08z3.jpg", "Buff Doge vs Cheems"),
-    ("https://i.imgflip.com/4acd7j.png", "Woman Yelling At Cat"),
-    ("https://i.imgflip.com/1jwhww.jpg", "Is This A Pigeon"),
-    ("https://i.imgflip.com/3lhx3p.jpg", "Gru Plan"),
-    ("https://i.imgflip.com/2fm6x.jpg", "Success Kid"),
-    ("https://i.imgflip.com/37cjr.jpg", "Futurama Fry"),
-    ("https://i.imgflip.com/2yut.jpg", "Philosoraptor"),
-    ("https://i.imgflip.com/18iy.jpg", "Not Sure If"),
-    ("https://i.imgflip.com/8k0sa.jpg", "Overthinking It"),
-    ("https://i.imgflip.com/gk5el.jpg", "Picard Facepalm"),
-    ("https://i.imgflip.com/30cub.jpg", "Boardroom Meeting"),
-    ("https://i.imgflip.com/1c1uej.jpg", "Oprah You Get A"),
-    ("https://i.imgflip.com/n58iz.jpg", "Confession Bear"),
-    ("https://i.imgflip.com/3si4.jpg", "Overly Attached Girlfriend"),
-    ("https://i.imgflip.com/92p3z.jpg", "First World Problems"),
-    ("https://i.imgflip.com/6nu7g.jpg", "Michael Jordan Crying"),
-    ("https://i.imgflip.com/2kbn1e.jpg", "Everywhere"),
-    ("https://i.imgflip.com/3c5uf8.png", "Nobody Absolutely Nobody"),
-    ("https://i.imgflip.com/qkpy2.jpg", "Spiderman Pointing"),
-    ("https://i.imgflip.com/7d68p.jpg", "Willy Wonka"),
-    ("https://i.imgflip.com/265k.jpg", "Third World Skeptical Kid"),
-    ("https://i.imgflip.com/5hfybi.jpg", "Trade Offer"),
-    ("https://i.imgflip.com/50lyb8.jpg", "Panik Kalm Panik"),
-    ("https://i.imgflip.com/33fb4o.jpg", "Stonks"),
-    ("https://i.imgflip.com/1bh8wl.jpg", "Bad Luck Brian"),
-    ("https://i.imgflip.com/4hbspy.jpg", "Gus Fring We Are Not The Same"),
-    ("https://i.imgflip.com/53ny2v.jpg", "Marked Safe From"),
-    ("https://i.imgflip.com/4vjgmh.jpg", "Megamind Peeking"),
-    ("https://i.imgflip.com/5exjdv.jpg", "Crying Cat"),
-    ("https://i.imgflip.com/3p3bij.jpg", "Swole Doge vs Cheems"),
-    ("https://i.imgflip.com/1o00in.jpg", "American Chopper Argument"),
-    ("https://i.imgflip.com/5y0m1d.jpg", "Patrick Star To Do List"),
-    ("https://i.imgflip.com/51wz3k.jpg", "Finding Neverland"),
-    ("https://i.imgflip.com/4t0m5.jpg", "NPC Talking"),
-    ("https://i.imgflip.com/2ku1a0.jpg", "I Bet He's Thinking About Other Women"),
-    ("https://i.imgflip.com/6t4ck9.jpg", "A Train Hitting A School Bus"),
-    ("https://i.imgflip.com/5p7csy.jpg", "Two Paths"),
-    ("https://i.imgflip.com/1s3k5.jpg", "I Should Buy A Boat Cat"),
-    ("https://i.imgflip.com/9ehk.jpg", "Waiting Skeleton"),
-    ("https://i.imgflip.com/26xrd.jpg", "The Most Interesting Man"),
-    ("https://i.imgflip.com/3046y.jpg", "Surprised Monkey"),
-    ("https://i.imgflip.com/m78d.jpg", "Ancient Aliens v2"),
-    ("https://i.imgflip.com/52e5ry.jpg", "Running Away Balloon"),
-    ("https://i.imgflip.com/6e73jb.jpg", "Squid Game Doll"),
-]
-
-CLASSIC_INTERNET_MEMES = [
-    ("https://i.imgflip.com/1bh8wl.jpg", "Bad Luck Brian"),
-    ("https://i.imgflip.com/3vfmyp.jpg", "Socially Awkward Penguin"),
-    ("https://i.imgflip.com/3lhx6x.jpg", "Scumbag Steve"),
-    ("https://i.imgflip.com/2ag9iu.jpg", "Success Kid Original"),
-    ("https://i.imgflip.com/1bhf.jpg", "Y U No"),
-    ("https://i.imgflip.com/5lek8u.jpg", "Technically True"),
-    ("https://i.imgflip.com/3vbb5o.jpg", "Anime Is Trash"),
-    ("https://i.imgflip.com/24y43o.jpg", "Wait That's Illegal"),
-    ("https://i.imgflip.com/3j193j.jpg", "Clown Applying Makeup"),
-    ("https://i.imgflip.com/57hz93.png", "Running Guys"),
-    ("https://i.imgflip.com/50lyb8.jpg", "Panik Kalm Panik"),
-    ("https://i.imgflip.com/5oeoe8.jpg", "Sigma Grindset"),
-    ("https://i.imgflip.com/3udrba.jpg", "Pushing and Pulling"),
-    ("https://i.imgflip.com/1kijv0.jpg", "Tuxedo Winnie The Pooh"),
-    ("https://i.imgflip.com/23bs8.jpg", "Back In My Day"),
-    ("https://i.imgflip.com/2fm6x.jpg", "Successful Black Man"),
-    ("https://i.imgflip.com/yz6t4.jpg", "Good Guy Greg"),
-    ("https://i.imgflip.com/6v8xuo.jpg", "GigaChad"),
-    ("https://i.imgflip.com/4t0m5.jpg", "No Yes"),
-    ("https://i.imgflip.com/1c1uej.jpg", "You Get Nothing"),
-    ("https://i.imgflip.com/33fb4o.jpg", "Stonks"),
-    ("https://i.imgflip.com/5hfybi.jpg", "Trade Offer"),
-    ("https://i.imgflip.com/3idn.jpg", "All The Things"),
-    ("https://i.imgflip.com/g8k1s.jpg", "Conspiracy Keanu"),
-    ("https://i.imgflip.com/3ot8g.jpg", "Crazy Ex Girlfriend"),
-    ("https://i.imgflip.com/5cy0.jpg", "10 Guy"),
-    ("https://i.imgflip.com/vsg6f.jpg", "90s Kid"),
-    ("https://i.imgflip.com/4hf4s3.jpg", "Karen"),
-    ("https://i.imgflip.com/24y43o.jpg", "Surprised Wojak"),
-    ("https://i.imgflip.com/5tf5gz.jpg", "He Doesn't Know"),
-]
-
-RUSSIAN_SEGMENT_MEMES = [
-    ("https://i.imgflip.com/1bij.jpg", "Всё нормально"),
-    ("https://i.imgflip.com/2hgfw.jpg", "Скрытая боль"),
-    ("https://i.imgflip.com/3oevdk.jpg", "Мозговой штурм"),
-    ("https://i.imgflip.com/4t0m5.jpg", "Да или Нет"),
-    ("https://i.imgflip.com/30b1gx.jpg", "Договорились"),
-    ("https://i.imgflip.com/2wifvo.jpg", "Ну и ну"),
-    ("https://i.imgflip.com/43a45p.png", "Сильный и слабый"),
-    ("https://i.imgflip.com/23ls.jpg", "Нет, это неправильно"),
-    ("https://i.imgflip.com/1e7ql7.jpg", "Так просто не бывает"),
-    ("https://i.imgflip.com/2gnhut.jpg", "Переубеди меня"),
-    ("https://i.imgflip.com/2zo1ki.jpg", "Ой, случайно увидел"),
-    ("https://i.imgflip.com/3lmzyx.png", "Возьми больше"),
-    ("https://i.imgflip.com/9vct.jpg", "Это инопланетяне"),
-    ("https://i.imgflip.com/1ur9b0.jpg", "Два варианта"),
-    ("https://i.imgflip.com/26jxvz.png", "Отвлёкся"),
-    ("https://i.imgflip.com/1g8my4.jpg", "Умная мысль"),
-    ("https://i.imgflip.com/1otk96.jpg", "Издеваешься что ли"),
-    ("https://i.imgflip.com/1yxkcp.jpg", "Умный план"),
-    ("https://i.imgflip.com/5c7lwq.png", "Всегда так было"),
-    ("https://i.imgflip.com/3s08z3.jpg", "Тогда и сейчас"),
-]
-
-GAMING_MEMES = [
-    ("https://i.imgflip.com/1g8my4.jpg", "Dark Souls Bonfire"),
-    ("https://i.imgflip.com/2gnhut.jpg", "Change My Load-out"),
-    ("https://i.imgflip.com/3oevdk.jpg", "100% Achievement"),
-    ("https://i.imgflip.com/5c7lwq.png", "It Was Always PvP"),
-    ("https://i.imgflip.com/4t0m5.jpg", "Story Mode Skip"),
-    ("https://i.imgflip.com/1bij.jpg", "Server Is Fine"),
-    ("https://i.imgflip.com/2wifvo.jpg", "Loot Drop"),
-    ("https://i.imgflip.com/30b1gx.jpg", "Co-op"),
-    ("https://i.imgflip.com/1e7ql7.jpg", "Tutorial Zone"),
-    ("https://i.imgflip.com/26jxvz.png", "NPC Distraction"),
-    ("https://i.imgflip.com/23ls.jpg", "Skill Issue"),
-    ("https://i.imgflip.com/43a45p.png", "Keyboard vs Controller"),
-    ("https://i.imgflip.com/2zo1ki.jpg", "Random Encounter"),
-    ("https://i.imgflip.com/1ur9b0.jpg", "Save or Quit"),
-    ("https://i.imgflip.com/1yxkcp.jpg", "Pro Gamer Move"),
-    ("https://i.imgflip.com/3lmzyx.png", "Inventory Full"),
-    ("https://i.imgflip.com/9vct.jpg", "Speedrun Logic"),
-    ("https://i.imgflip.com/2hgfw.jpg", "Play It Cool"),
-    ("https://i.imgflip.com/1otk96.jpg", "Mocking the Tutorial"),
-    ("https://i.imgflip.com/3lhx3p.jpg", "Gamer Plan"),
-    ("https://i.imgflip.com/3s08z3.jpg", "Old Game vs New Game"),
-    ("https://i.imgflip.com/4acd7j.png", "Toxic Teammate"),
-    ("https://i.imgflip.com/1jwhww.jpg", "Is This Endgame"),
-    ("https://i.imgflip.com/37cjr.jpg", "Not Sure If Lag"),
-    ("https://i.imgflip.com/6nu7g.jpg", "Died In Final Boss"),
+    # Tier 1 — universally recognized
+    ("https://i.imgflip.com/4t0m5.jpg",    "Drake Hotline Bling"),
+    ("https://i.imgflip.com/26jxvz.png",   "Distracted Boyfriend"),
+    ("https://i.imgflip.com/1bij.jpg",     "This Is Fine"),
+    ("https://i.imgflip.com/2wifvo.jpg",   "Surprised Pikachu"),
+    ("https://i.imgflip.com/1e7ql7.jpg",   "One Does Not Simply"),
+    ("https://i.imgflip.com/3oevdk.jpg",   "Expanding Brain"),
+    ("https://i.imgflip.com/4acd7j.png",   "Woman Yelling At Cat"),
+    ("https://i.imgflip.com/1ur9b0.jpg",   "Two Buttons"),
+    ("https://i.imgflip.com/23ls.jpg",     "Batman Slapping Robin"),
+    ("https://i.imgflip.com/3lmzyx.png",   "UNO Draw 25"),
+    ("https://i.imgflip.com/30b1gx.jpg",   "Epic Handshake"),
+    ("https://i.imgflip.com/5c7lwq.png",   "Always Has Been"),
+    ("https://i.imgflip.com/2gnhut.jpg",   "Change My Mind"),
+    ("https://i.imgflip.com/2hgfw.jpg",    "Hide The Pain Harold"),
+    ("https://i.imgflip.com/1otk96.jpg",   "Mocking SpongeBob"),
+    ("https://i.imgflip.com/1yxkcp.jpg",   "Roll Safe"),
+    ("https://i.imgflip.com/3s08z3.jpg",   "Buff Doge vs Cheems"),
+    ("https://i.imgflip.com/1jwhww.jpg",   "Is This A Pigeon"),
+    ("https://i.imgflip.com/3lhx3p.jpg",   "Gru's Plan"),
+    ("https://i.imgflip.com/2fm6x.jpg",    "Success Kid"),
+    ("https://i.imgflip.com/37cjr.jpg",    "Futurama Fry"),
+    ("https://i.imgflip.com/2yut.jpg",     "Philosoraptor"),
+    ("https://i.imgflip.com/gk5el.jpg",    "Picard Facepalm"),
+    ("https://i.imgflip.com/9vct.jpg",     "Ancient Aliens"),
+    ("https://i.imgflip.com/2zo1ki.jpg",   "Monkey Puppet"),
+    ("https://i.imgflip.com/3p3bij.jpg",   "Swole Doge vs Cheems"),
+    ("https://i.imgflip.com/1kijv0.jpg",   "Tuxedo Winnie The Pooh"),
+    ("https://i.imgflip.com/6v8xuo.jpg",   "GigaChad"),
+    ("https://i.imgflip.com/5hfybi.jpg",   "Trade Offer"),
+    ("https://i.imgflip.com/50lyb8.jpg",   "Panik Kalm Panik"),
+    ("https://i.imgflip.com/33fb4o.jpg",   "Stonks"),
+    ("https://i.imgflip.com/1bh8wl.jpg",   "Bad Luck Brian"),
+    ("https://i.imgflip.com/5exjdv.jpg",   "Crying Cat"),
+    ("https://i.imgflip.com/6nu7g.jpg",    "Michael Jordan Crying"),
+    ("https://i.imgflip.com/qkpy2.jpg",    "Spiderman Pointing"),
+    ("https://i.imgflip.com/n58iz.jpg",    "Confession Bear"),
+    ("https://i.imgflip.com/92p3z.jpg",    "First World Problems"),
+    ("https://i.imgflip.com/7d68p.jpg",    "Willy Wonka"),
+    ("https://i.imgflip.com/2kbn1e.jpg",   "X X Everywhere"),
+    ("https://i.imgflip.com/265k.jpg",     "Third World Skeptical Kid"),
+    ("https://i.imgflip.com/1bhf.jpg",     "Y U No"),
+    ("https://i.imgflip.com/3vfmyp.jpg",   "Socially Awkward Penguin"),
+    ("https://i.imgflip.com/3lhx6x.jpg",   "Scumbag Steve"),
+    ("https://i.imgflip.com/yz6t4.jpg",    "Good Guy Greg"),
+    ("https://i.imgflip.com/g8k1s.jpg",    "Conspiracy Keanu"),
+    ("https://i.imgflip.com/3idn.jpg",     "X All The Y"),
+    ("https://i.imgflip.com/5cy0.jpg",     "10 Guy"),
+    ("https://i.imgflip.com/3si4.jpg",     "Overly Attached Girlfriend"),
+    ("https://i.imgflip.com/1o00in.jpg",   "American Chopper Argument"),
+    ("https://i.imgflip.com/53ny2v.jpg",   "Marked Safe From"),
+    # Tier 2 — highly popular
+    ("https://i.imgflip.com/4vjgmh.jpg",   "Megamind Peeking"),
+    ("https://i.imgflip.com/4hbspy.jpg",   "Gus Fring We Are Not The Same"),
+    ("https://i.imgflip.com/30cub.jpg",    "Boardroom Meeting Suggestion"),
+    ("https://i.imgflip.com/1c1uej.jpg",   "Oprah You Get A"),
+    ("https://i.imgflip.com/43a45p.png",   "Chad vs Virgin"),
+    ("https://i.imgflip.com/52e5ry.jpg",   "Running Away Balloon"),
+    ("https://i.imgflip.com/6e73jb.jpg",   "Squid Game Doll"),
+    ("https://i.imgflip.com/5y0m1d.jpg",   "Patrick To Do List"),
+    ("https://i.imgflip.com/1g8my4.jpg",   "Big Brain Time"),
+    ("https://i.imgflip.com/18iy.jpg",     "Not Sure If"),
+    ("https://i.imgflip.com/8k0sa.jpg",    "Overthinking It"),
+    ("https://i.imgflip.com/24y43o.jpg",   "Wait That's Illegal"),
+    ("https://i.imgflip.com/3j193j.jpg",   "Clown Applying Makeup"),
+    ("https://i.imgflip.com/57hz93.png",   "Running Guys"),
+    ("https://i.imgflip.com/5oeoe8.jpg",   "Sigma Grindset"),
+    ("https://i.imgflip.com/3udrba.jpg",   "Pushing And Pulling"),
+    ("https://i.imgflip.com/1s3k5.jpg",    "I Should Buy A Boat Cat"),
+    ("https://i.imgflip.com/9ehk.jpg",     "Waiting Skeleton"),
+    ("https://i.imgflip.com/26xrd.jpg",    "The Most Interesting Man"),
+    ("https://i.imgflip.com/3046y.jpg",    "Surprised Monkey"),
+    ("https://i.imgflip.com/m78d.jpg",     "Ancient Aliens Guy"),
+    ("https://i.imgflip.com/5p7csy.jpg",   "Two Paths"),
+    ("https://i.imgflip.com/51wz3k.jpg",   "Finding Neverland"),
+    ("https://i.imgflip.com/5lek8u.jpg",   "Technically True"),
+    ("https://i.imgflip.com/vsg6f.jpg",    "90s Kid"),
+    ("https://i.imgflip.com/4hf4s3.jpg",   "Karen"),
+    ("https://i.imgflip.com/23bs8.jpg",    "Back In My Day"),
+    ("https://i.imgflip.com/6t4ck9.jpg",   "Train vs School Bus"),
+    ("https://i.imgflip.com/2ku1a0.jpg",   "I Bet He's Thinking About Others"),
+    ("https://i.imgflip.com/5tf5gz.jpg",   "He Doesn't Know"),
+    ("https://i.imgflip.com/3ot8g.jpg",    "Crazy Ex Girlfriend"),
+    ("https://i.imgflip.com/2ag9iu.jpg",   "Success Kid Original"),
+    ("https://i.imgflip.com/3c5uf8.png",   "Nobody Absolutely Nobody"),
+    ("https://i.imgflip.com/1h7in3.jpg",   "Think About It"),
+    ("https://i.imgflip.com/2hgfw.jpg",    "Hide The Pain Harold"),
+    # Tier 3 — format classics
+    ("https://i.imgflip.com/5nqgd5.jpg",   "Anakin Padme They're The Same"),
+    ("https://i.imgflip.com/7y3xxu.jpg",   "Breaking Bad Say The Line"),
+    ("https://i.imgflip.com/4pn1an.jpg",   "Awkward Monkey Puppet"),
+    ("https://i.imgflip.com/5zvt5x.jpg",   "Average Fan vs Average Enjoyer"),
+    ("https://i.imgflip.com/2f4e8m.jpg",   "Two Guys One Meme"),
+    ("https://i.imgflip.com/44o2yb.jpg",   "Uno Reverse Card"),
+    ("https://i.imgflip.com/2p4siq.jpg",   "Imagine If You Will"),
+    ("https://i.imgflip.com/39t1o.jpg",    "It's Not Going To Happen"),
+    ("https://i.imgflip.com/1jaa5.jpg",    "Super Cool Ski Instructor"),
+    ("https://i.imgflip.com/dxb1z.jpg",    "Leonardo DiCaprio Cheers"),
+    ("https://i.imgflip.com/u0qsb.jpg",    "Dwight Schrute"),
+    ("https://i.imgflip.com/12mk4.jpg",    "That Would Be Great"),
+    ("https://i.imgflip.com/3lhzgk.jpg",   "The Scroll Of Truth"),
+    ("https://i.imgflip.com/5lkr2g.jpg",   "Distracted BF Upgrade"),
+    ("https://i.imgflip.com/1o1hjq.jpg",   "Left Exit 12 Off Ramp"),
+    ("https://i.imgflip.com/4x8nqu.jpg",   "Squid Game Cookie Shape"),
+    ("https://i.imgflip.com/7e0f92.jpg",   "Let Me In"),
+    ("https://i.imgflip.com/4tcb3m.jpg",   "History Of The World Part"),
+    ("https://i.imgflip.com/3kvv0n.jpg",   "Grandma Finds The Internet"),
+    ("https://i.imgflip.com/2xjb7k.jpg",   "Spongebob Ight Imma Head Out"),
+    ("https://i.imgflip.com/68p9tr.jpg",   "Homer Simpson Backing Into Bushes"),
+    ("https://i.imgflip.com/261o3j.jpg",   "How Tough Are You"),
+    ("https://i.imgflip.com/4cq9qv.jpg",   "POV You're About To"),
+    ("https://i.imgflip.com/6uhkuw.jpg",   "I Am Speed"),
+    ("https://i.imgflip.com/cjuh3.jpg",    "Doge"),
+    ("https://i.imgflip.com/28j0te.jpg",   "Flexing Skeleton"),
+    ("https://i.imgflip.com/5b14vp.jpg",   "Nobody Me"),
+    ("https://i.imgflip.com/30k24s.jpg",   "Clapping Kid"),
+    ("https://i.imgflip.com/7br3zw.jpg",   "Russian Sleep Experiment"),
 ]
 
 SPECIAL_MEMES = [
-    ("https://i.imgflip.com/2zo1ki.jpg", "Кража карты", SpecialType.steal),
-    ("https://i.imgflip.com/5c7lwq.png", "Щит от штрафа", SpecialType.skip_penalty),
-    ("https://i.imgflip.com/3lmzyx.png", "Двойной удар", SpecialType.double_play),
+    ("https://i.imgflip.com/2zo1ki.jpg",   "Кража карты",    SpecialType.steal),
+    ("https://i.imgflip.com/5c7lwq.png",   "Щит от штрафа",  SpecialType.skip_penalty),
+    ("https://i.imgflip.com/3lmzyx.png",   "Двойной удар",   SpecialType.double_play),
 ]
 
 # ─── Situations ──────────────────────────────────────────────────────────────
-# 250+ unique situations across four categories
 
 SITUATIONS: list[tuple[str, SituationCategory]] = [
     # ── Work ─────────────────────────────────────────────────────────────────
@@ -382,7 +343,6 @@ SITUATIONS: list[tuple[str, SituationCategory]] = [
 
 
 async def fetch_imgflip_memes() -> list[tuple[str, str]]:
-    """Fetch top 100 meme templates from imgflip public API."""
     if not HAS_HTTPX:
         return []
     try:
@@ -402,60 +362,58 @@ async def fetch_imgflip_memes() -> list[tuple[str, str]]:
 
 
 async def _upsert_meme(db: AsyncSession, url: str, name: str, category: str) -> None:
-    existing = await db.execute(select(Meme).where(Meme.url == url, Meme.name == name))
-    if not existing.scalar_one_or_none():
+    existing = await db.execute(select(Meme).where(Meme.url == url))
+    if not existing.scalars().first():
         db.add(Meme(url=url, name=name, category=category))
 
 
+async def _run_migrations() -> None:
+    from sqlalchemy import text
+    for stmt in [
+        "ALTER TYPE gamemode ADD VALUE IF NOT EXISTS 'arena'",
+        "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS rounds_count INTEGER NOT NULL DEFAULT 10",
+    ]:
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(text(stmt))
+        except Exception as exc:
+            logger.warning("Migration skipped (%s): %s", stmt[:40], exc)
+
+
 async def seed():
+    await _run_migrations()
+
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-    # Try to fetch live templates from imgflip
     print("Fetching memes from imgflip.com API…")
     api_memes = await fetch_imgflip_memes()
     print(f"  Got {len(api_memes)} templates from imgflip API")
 
     async with Session() as db:
-        # imgflip API memes → "starter" pack
         for url, name in api_memes:
             await _upsert_meme(db, url, name, "starter")
 
-        # Hardcoded starter memes
         for url, name in STARTER_MEMES:
             await _upsert_meme(db, url, name, "starter")
 
-        # Pack memes
-        for url, name in CLASSIC_INTERNET_MEMES:
-            await _upsert_meme(db, url, name, "classic_internet")
-
-        for url, name in RUSSIAN_SEGMENT_MEMES:
-            await _upsert_meme(db, url, name, "russian_segment")
-
-        for url, name in GAMING_MEMES:
-            await _upsert_meme(db, url, name, "gaming")
-
-        # Special memes
         for url, name, special_type in SPECIAL_MEMES:
-            existing = await db.execute(select(Meme).where(Meme.name == name))
-            if not existing.scalar_one_or_none():
+            existing = await db.execute(select(Meme).where(Meme.url == url, Meme.is_special == True))
+            if not existing.scalars().first():
                 db.add(Meme(
                     url=url, name=name, category="special",
                     is_special=True, special_type=special_type,
                 ))
 
-        # Situations
         for text, category in SITUATIONS:
             existing = await db.execute(select(Situation).where(Situation.text == text))
-            if not existing.scalar_one_or_none():
+            if not existing.scalars().first():
                 db.add(Situation(text=text, category=category))
 
         await db.commit()
 
-    total_api = len(api_memes)
-    total_hard = len(STARTER_MEMES) + len(CLASSIC_INTERNET_MEMES) + len(RUSSIAN_SEGMENT_MEMES) + len(GAMING_MEMES)
-    print(f"Seed complete! Memes: ~{total_api + total_hard} | Situations: {len(SITUATIONS)}")
-    print("Meme source: https://imgflip.com — крупнейший в мире генератор мемов")
+    total = len(api_memes) + len(STARTER_MEMES)
+    print(f"Seed complete! Memes: ~{total} unique | Situations: {len(SITUATIONS)}")
 
 
 if __name__ == "__main__":
